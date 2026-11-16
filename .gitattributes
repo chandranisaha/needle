@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.jpg binary
+*.png binary
+demo/graph.js linguist-generated
+demo/words.js linguist-generated

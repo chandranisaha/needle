@@ -1,0 +1,9 @@
+build/
+data/
+third_party/
+.claude/
+__pycache__/
+*.fvecs
+*.ivecs
+*.bvecs
+*.idx
