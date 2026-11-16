@@ -29,3 +29,8 @@ if(NOT MSVC)
     target_compile_options(needle PUBLIC -march=native)
   endif()
 endif()
+
+enable_testing()
+add_executable(needle_tests tests/test_main.cpp)
+target_link_libraries(needle_tests PRIVATE needle)
+add_test(NAME needle_tests COMMAND needle_tests)
