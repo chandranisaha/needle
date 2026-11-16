@@ -30,6 +30,9 @@ if(NOT MSVC)
   endif()
 endif()
 
+add_executable(needle_bench bench/bench_main.cpp)
+target_link_libraries(needle_bench PRIVATE needle)
+
 enable_testing()
 add_executable(needle_tests tests/test_main.cpp)
 target_link_libraries(needle_tests PRIVATE needle)
