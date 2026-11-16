@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
     const double train_s = seconds_since(start);
     start = Clock::now();
     const std::vector<std::uint8_t> codes = pq.encode(base);
-    const double mb = 1024.0 * 1024.0;
+    const double mb = 1e6;
     const double vector_mb = static_cast<double>(base.n * base.dim * sizeof(float)) / mb;
     const double code_mb = static_cast<double>(codes.size()) / mb;
     std::printf("\npq: %zu bytes per vector, trained in %.1f s, encoded in %.1f s (all cores)\n", o.pq,

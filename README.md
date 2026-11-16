@@ -14,13 +14,15 @@ dependencies beyond the standard library.
   sit within run-to-run noise of each other.
 - **Parallel build.** One spinlock per node; 302 s on one thread, 74 s on 14. The tests pass under
   ThreadSanitizer.
+- **Compressed search.** With every vector squeezed from 512 bytes to 32 by a product quantizer,
+  recall@10 at the same search width is 97.7% against 98.5%.
 - **Two real bugs found and explained.** A pruning rule that collapsed recall on clustered data, and
   nodes no search could reach. Both are written up below with the measurements that found them.
 - **Interactive demo.** Type words, steer them with dials, and watch the index being searched and
   built in the browser.
 
-What is here: the index, AVX2 distance code, a multi-threaded build, index save and load, an exact
-brute-force baseline, a benchmark against hnswlib, tests, and the demo page.
+What is here: the index, AVX2 distance code, a multi-threaded build, index save and load, a product
+quantizer and search on its codes, an exact brute-force baseline, a benchmark against hnswlib, tests, and the demo page.
 
 ## Build and run
 
@@ -152,6 +154,30 @@ The prune change costs speed at a fixed L because the graph spends more comparis
 reaches a given recall with a narrower search: 0.95 recall took L = 80 before (6,422 queries/s) and
 takes L = 40 now (9,387 queries/s).
 
+### Search on compressed vectors
+
+The same SIFT1M index, with the graph walked on product-quantizer codes and the L candidates the
+walk ends with re-scored by their real vectors (`needle_bench --load sift.idx --pq 32`). The real
+vectors take 512 MB and the graph 132 MB.
+
+| L | uncompressed | 64 bytes (8x) | 32 bytes (16x) | 16 bytes (32x) |
+|---|---|---|---|---|
+| 40 | 0.9492 | 0.9467 | 0.9267 | 0.8470 |
+| 80 | 0.9851 | 0.9815 | 0.9770 | 0.9398 |
+| 160 | 0.9955 | 0.9955 | 0.9940 | 0.9820 |
+| 320 | 0.9988 | 0.9986 | 0.9986 | 0.9961 |
+| codes take | | 64 MB | 32 MB | 16 MB |
+
+Entries are recall@10. At 32 bytes per vector the walk reads 16 times less memory and gives up 0.8
+points of recall at L = 80; doubling L gets it back. Without re-scoring, recall stops rising with L
+at 0.87, 0.70 and 0.54 for 64, 32 and 16 bytes: the codes find the right neighbourhood but cannot
+order its closest members, which is why the last step uses real vectors. Training and encoding the
+million vectors at 32 bytes took about 10 s on all cores.
+
+No speeds are given here. When these were measured other programs had the laptop at about half the
+speed of the tables above (brute force ran at 18 queries/s against 39.8), and the timings moved too
+much between rows to rank the code sizes against uncompressed search.
+
 ## How it works
 
 - **Graph.** Every vector is a node with at most R outgoing edges, stored as one flat `n * R` array.
@@ -164,6 +190,11 @@ takes L = 40 now (9,387 queries/s).
   cross the dataset in few hops.
 - **Threads.** The build takes one spinlock per node and never holds two at once. Searches after the
   build take no locks; each thread has its own scratch memory.
+- **Compression.** A product quantizer cuts each vector into m parts and stores, for each part, the
+  id of the nearest of 256 k-means centroids, so a vector takes m bytes. For a query, one table of
+  part-to-centroid distances is built, after which the distance to any stored vector is m lookups.
+  `search_pq` walks the graph on these codes and then re-scores the candidates it ends with using
+  the real vectors.
 
 ## Bugs found
 
@@ -192,8 +223,9 @@ stays because nothing else guarantees reachability.
 `needle_tests` covers: distance (AVX2 against scalar on odd sizes), exact search against a full
 sort, file round trips, the recall metric, graph invariants (degree limit, no self or duplicate
 edges, everything reachable), a deterministic single-threaded build, an 8-thread build, save and
-load including refusing a truncated file or one from another dataset, and recall on three kinds of
-data. The same tests pass under ThreadSanitizer (`-DCMAKE_CXX_FLAGS=-fsanitize=thread`).
+load including refusing a truncated file or one from another dataset, recall on three kinds of
+data, and the quantizer (reconstruction error, table distances against decoded vectors, the same
+centroids on any thread count, search on codes with and without re-scoring). The same tests pass under ThreadSanitizer (`-DCMAKE_CXX_FLAGS=-fsanitize=thread`).
 
 `.github/workflows/ci.yml` runs them on every push with gcc, clang, the scalar distance kernel
 forced on (`-DNEEDLE_FORCE_SCALAR=ON`), and ThreadSanitizer.
@@ -202,6 +234,7 @@ forced on (`-DNEEDLE_FORCE_SCALAR=ON`), and ThreadSanitizer.
 
 - `include/needle/distance.h`: squared L2 distance, scalar and AVX2
 - `src/vamana.cpp`: graph build, pruning, beam search, repair pass, save and load
+- `src/pq.cpp`: product quantizer (k-means training, encoding, distance tables)
 - `src/brute_force.cpp`: exact top-k and the recall metric
 - `bench/bench_main.cpp`: recall against queries per second
 - `bench/hnsw_baseline.cpp`, `bench/compare_sift1m.sh`: the hnswlib comparison
@@ -219,6 +252,8 @@ forced on (`-DNEEDLE_FORCE_SCALAR=ON`), and ThreadSanitizer.
 - hnswlib (Apache-2.0) is used only as the benchmark baseline and is not vendored.
 - Vamana and RobustPrune: Subramanya et al., "DiskANN: Fast Accurate Billion-point Nearest Neighbor
   Search on a Single Node", NeurIPS 2019.
+- Product quantization: Jégou, Douze and Schmid, "Product Quantization for Nearest Neighbor
+  Search", TPAMI 2011.
 - HNSW: Malkov and Yashunin, "Efficient and robust approximate nearest neighbor search using
   Hierarchical Navigable Small World graphs", 2018.
 
@@ -226,7 +261,9 @@ forced on (`-DNEEDLE_FORCE_SCALAR=ON`), and ThreadSanitizer.
 
 - Only squared L2 distance. No cosine or inner product.
 - The index is static: no inserts or deletes after the build.
-- Vectors stay uncompressed in memory (512 MB for SIFT1M, plus 128 MB of graph).
+- Compressed search still keeps the real vectors in memory for re-scoring, so it does not yet
+  shrink the process. The saving becomes real when the vectors sit on disk and only the re-scored
+  ones are read, which is the DiskANN design and is not built.
 - A threaded build is not reproducible run to run; a single-threaded one is.
 - The benchmark is one dataset on one laptop.
 
@@ -234,6 +271,6 @@ forced on (`-DNEEDLE_FORCE_SCALAR=ON`), and ThreadSanitizer.
 
 1. Find out why search throughput stops scaling at 4x: run `bench/scaling.sh` on an idle machine,
    then pin threads to the performance cores to separate core speed from memory bandwidth
-2. Product quantization to cut memory
+2. Keep the real vectors on disk and read only the re-scored ones, so compressed search cuts memory
 3. Inserts and deletes
 4. Compile the engine to WebAssembly so the demo runs the C++ itself
