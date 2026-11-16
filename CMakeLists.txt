@@ -17,6 +17,7 @@ find_package(Threads REQUIRED)
 add_library(needle
   src/dataset.cpp
   src/brute_force.cpp
+  src/pq.cpp
   src/vamana.cpp)
 target_include_directories(needle PUBLIC include)
 target_link_libraries(needle PUBLIC Threads::Threads)

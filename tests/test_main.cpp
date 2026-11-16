@@ -9,6 +9,7 @@
 #include "needle/brute_force.h"
 #include "needle/dataset.h"
 #include "needle/distance.h"
+#include "needle/pq.h"
 #include "needle/vamana.h"
 
 using namespace needle;
@@ -248,7 +249,75 @@ static void test_base_point_finds_itself() {
   CHECK(found_self >= base.n * 99 / 100);
 }
 
+/// Squared error of decode(encode(x)) summed over the data, as a fraction of the squared norms.
+static double pq_error(const ProductQuantizer& pq, const Dataset& data) {
+  const auto codes = pq.encode(data);
+  const std::vector<float> zero(data.dim, 0.0f);
+  std::vector<float> back(data.dim);
+  double error = 0.0, norm = 0.0;
+  for (std::size_t i = 0; i < data.n; ++i) {
+    pq.decode(codes.data() + i * pq.m(), back.data());
+    error += l2_sq(data.row(i), back.data(), data.dim);
+    norm += l2_sq(data.row(i), zero.data(), data.dim);
+  }
+  return error / norm;
+}
+
+static void test_pq_codes_and_distances() {
+  const Dataset all = make_low_rank(6'020, 32, 10, 5);
+  const Dataset data = slice(all, 0, 6'000);
+  const Dataset queries = slice(all, 6'000, 6'020);
+
+  ProductQuantizer coarse, fine;
+  coarse.train(data, {.m = 4, .train_size = 4'000});
+  fine.train(data, {.m = 16, .train_size = 4'000});
+  CHECK(fine.m() == 16 && fine.dim() == 32);
+
+  // More bytes per vector must reconstruct it better.
+  const double coarse_error = pq_error(coarse, data), fine_error = pq_error(fine, data);
+  std::printf("pq reconstruction error: %.4f at 4 bytes, %.4f at 16 bytes\n", coarse_error, fine_error);
+  CHECK(fine_error < coarse_error);
+  CHECK(fine_error < 0.05);
+
+  // A table distance is the exact distance to the decoded vector, not an estimate of it.
+  const auto codes = fine.encode(data);
+  std::vector<float> table(fine.table_size()), back(data.dim);
+  for (std::size_t q = 0; q < queries.n; ++q) {
+    fine.distance_table(queries.row(q), table.data());
+    for (std::size_t i = 0; i < 200; ++i) {
+      const std::uint8_t* code = codes.data() + i * fine.m();
+      fine.decode(code, back.data());
+      const float want = l2_sq(queries.row(q), back.data(), data.dim);
+      CHECK(std::fabs(fine.distance(table.data(), code) - want) <= 1e-3f * std::max(1.0f, want));
+    }
+  }
+
+  // Training gives the same centroids on any number of threads.
+  ProductQuantizer one, many;
+  one.train(data, {.m = 8, .train_size = 2'000, .iters = 4, .threads = 1});
+  many.train(data, {.m = 8, .train_size = 2'000, .iters = 4, .threads = 4});
+  CHECK(one.encode(data, 1) == many.encode(data, 4));
+
+  bool threw = false;
+  try {
+    ProductQuantizer bad;
+    bad.train(data, {.m = 5});  // 32 dimensions do not split into 5 equal parts
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  CHECK(threw);
+
+  threw = false;
+  try {
+    (void)ProductQuantizer().encode(data);
+  } catch (const std::logic_error&) {
+    threw = true;
+  }
+  CHECK(threw);
+}
+
 int main() {
+  test_pq_codes_and_distances();
   test_distance();
   test_simd_matches_scalar();
   test_parallel_build();
