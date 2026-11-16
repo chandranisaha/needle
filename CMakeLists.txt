@@ -33,6 +33,9 @@ endif()
 add_executable(needle_bench bench/bench_main.cpp)
 target_link_libraries(needle_bench PRIVATE needle)
 
+add_executable(needle_unreachable tools/unreachable.cpp)
+target_link_libraries(needle_unreachable PRIVATE needle)
+
 # Baseline: git clone https://github.com/nmslib/hnswlib third_party/hnswlib
 set(NEEDLE_HNSWLIB_DIR "${CMAKE_SOURCE_DIR}/third_party/hnswlib" CACHE PATH "hnswlib checkout")
 if(EXISTS "${NEEDLE_HNSWLIB_DIR}/hnswlib/hnswlib.h")
