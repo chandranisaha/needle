@@ -316,8 +316,52 @@ static void test_pq_codes_and_distances() {
   CHECK(threw);
 }
 
+static void test_pq_search() {
+  const Dataset all = make_low_rank(20'200, 32, 10, 91);
+  const Dataset base = slice(all, 0, 20'000);
+  const Dataset queries = slice(all, 20'000, 20'200);
+  const auto truth = exact_knn_batch(base, queries, 10);
+
+  VamanaIndex index(base, {.R = 24, .L = 64, .threads = 0});
+  index.build();
+  ProductQuantizer pq;
+  pq.train(base, {.m = 8, .train_size = 10'000});
+  const auto codes = pq.encode(base);
+
+  auto recall = [&](std::size_t rerank) {
+    std::vector<std::vector<std::uint32_t>> found(queries.n);
+    for (std::size_t q = 0; q < queries.n; ++q) {
+      SearchStats stats;
+      const auto hits = index.search_pq(pq, codes, queries.row(q), 10, 80, rerank, &stats);
+      CHECK(hits.size() == 10);
+      CHECK(stats.rerank_comps == rerank);
+      CHECK(std::is_sorted(hits.begin(), hits.end()));
+      for (const Neighbor& h : hits) found[q].push_back(h.id);
+      if (rerank != 0) {  // re-scored results carry exact distances
+        CHECK(hits[0].dist == l2_sq(queries.row(q), base.row(hits[0].id), base.dim));
+      }
+    }
+    return recall_at_k(truth, found, 10);
+  };
+
+  // 8 bytes for 32 floats loses the fine order; re-scoring the beam with real vectors restores it.
+  const double codes_only = recall(0), reranked = recall(80);
+  std::printf("recall@10 on 8-byte codes, L=80: %.4f alone, %.4f after re-scoring\n", codes_only, reranked);
+  CHECK(codes_only >= 0.5);
+  CHECK(reranked >= 0.95);
+  CHECK(reranked > codes_only);
+
+  bool threw = false;
+  try {
+    const std::vector<std::uint8_t> wrong(codes.size() - 1);
+    (void)index.search_pq(pq, wrong, queries.row(0), 10, 80, 0);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  CHECK(threw);
+}
+
 int main() {
-  test_pq_codes_and_distances();
   test_distance();
   test_simd_matches_scalar();
   test_parallel_build();
@@ -331,6 +375,8 @@ int main() {
   test_build_is_deterministic();
   test_recall_on_clustered_data();
   test_base_point_finds_itself();
+  test_pq_codes_and_distances();
+  test_pq_search();
 
   if (failures != 0) {
     std::fprintf(stderr, "%d check(s) failed\n", failures);

@@ -10,6 +10,7 @@
 
 #include "needle/brute_force.h"
 #include "needle/dataset.h"
+#include "needle/pq.h"
 
 namespace needle {
 
@@ -23,8 +24,9 @@ struct VamanaParams {
 };
 
 struct SearchStats {
-  std::uint32_t dist_comps = 0;
+  std::uint32_t dist_comps = 0;    // distances computed while walking the graph
   std::uint32_t hops = 0;
+  std::uint32_t rerank_comps = 0;  // exact distances computed afterwards, search_pq only
 };
 
 /// Single-layer proximity graph from the DiskANN paper (Subramanya et al., NeurIPS 2019).
@@ -41,6 +43,14 @@ class VamanaIndex {
   std::vector<Neighbor> search(const float* query, std::size_t k, std::size_t L,
                                SearchStats* stats = nullptr) const;
 
+  /// The same search, walking the graph on product-quantizer codes of the indexed vectors
+  /// (codes = pq.encode(base)) so the walk never reads the vectors themselves. The best `rerank`
+  /// candidates are then re-scored with the real vectors; rerank = 0 skips that and returns the
+  /// approximate distances.
+  std::vector<Neighbor> search_pq(const ProductQuantizer& pq, std::span<const std::uint8_t> codes,
+                                  const float* query, std::size_t k, std::size_t L, std::size_t rerank,
+                                  SearchStats* stats = nullptr) const;
+
   /// Writes the graph (not the vectors) to a file.
   void save(const std::string& path) const;
   /// Reads a graph written by save(). The index must wrap the same vectors it was built from.
@@ -54,6 +64,10 @@ class VamanaIndex {
   const VamanaParams& params() const noexcept { return params_; }
 
  private:
+  /// The beam search itself, over whatever distance(id) returns; touch(id) prefetches what it reads.
+  template <typename Distance, typename Touch>
+  void walk(Distance distance, Touch touch, std::size_t L, std::vector<Neighbor>* expanded,
+            SearchStats* stats) const;
   void beam_search(const float* query, std::size_t L, std::vector<Neighbor>* expanded,
                    SearchStats* stats) const;
   void robust_prune(std::vector<Neighbor>& pool, float alpha, std::vector<std::uint32_t>& kept) const;

@@ -29,6 +29,7 @@ struct Scratch {
   std::vector<std::uint32_t> kept, back_kept;
   std::vector<char> pruned;
   std::vector<float> occlusion;
+  std::vector<float> table;  // the query's product-quantizer distance table
 
   void begin(std::size_t n) {
     if (stamp.size() < n) stamp.resize(n, 0);
@@ -86,6 +87,14 @@ inline void prefetch(const float* row) noexcept {
   __builtin_prefetch(row + 16);
 #else
   (void)row;
+#endif
+}
+
+inline void prefetch_bytes(const std::uint8_t* p) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  __builtin_prefetch(p);
+#else
+  (void)p;
 #endif
 }
 
@@ -261,8 +270,9 @@ std::size_t VamanaIndex::repair_orphans() {
   return repaired;
 }
 
-void VamanaIndex::beam_search(const float* query, std::size_t L, std::vector<Neighbor>* expanded,
-                              SearchStats* stats) const {
+template <typename Distance, typename Touch>
+void VamanaIndex::walk(Distance distance, Touch touch, std::size_t L, std::vector<Neighbor>* expanded,
+                       SearchStats* stats) const {
   Scratch& s = scratch();
   s.begin(base_.n);
   std::vector<Candidate>& beam = s.beam;
@@ -270,7 +280,7 @@ void VamanaIndex::beam_search(const float* query, std::size_t L, std::vector<Nei
   const bool building = locks_ != nullptr;
 
   s.visit(medoid_);
-  beam.push_back({l2_sq(query, base_.row(medoid_), base_.dim), medoid_, false});
+  beam.push_back({distance(medoid_), medoid_, false});
   ++local.dist_comps;
 
   // Invariant: every beam entry before cursor has been expanded.
@@ -297,12 +307,12 @@ void VamanaIndex::beam_search(const float* query, std::size_t L, std::vector<Nei
     } else {
       nbrs = neighbors(cur.id);
     }
-    for (const std::uint32_t nb : nbrs) prefetch(base_.row(nb));
+    for (const std::uint32_t nb : nbrs) touch(nb);
 
     std::size_t next = cursor + 1;
     for (const std::uint32_t nb : nbrs) {
       if (!s.visit(nb)) continue;
-      const float d = l2_sq(query, base_.row(nb), base_.dim);
+      const float d = distance(nb);
       ++local.dist_comps;
       if (beam.size() == L && d >= beam.back().dist) continue;
 
@@ -319,6 +329,12 @@ void VamanaIndex::beam_search(const float* query, std::size_t L, std::vector<Nei
   if (stats != nullptr) *stats = local;
 }
 
+void VamanaIndex::beam_search(const float* query, std::size_t L, std::vector<Neighbor>* expanded,
+                              SearchStats* stats) const {
+  walk([&](std::uint32_t id) { return l2_sq(query, base_.row(id), base_.dim); },
+       [&](std::uint32_t id) { prefetch(base_.row(id)); }, L, expanded, stats);
+}
+
 std::vector<Neighbor> VamanaIndex::search(const float* query, std::size_t k, std::size_t L,
                                           SearchStats* stats) const {
   if (degree_.empty()) throw std::logic_error("search before build");
@@ -328,6 +344,42 @@ std::vector<Neighbor> VamanaIndex::search(const float* query, std::size_t k, std
   std::vector<Neighbor> out;
   out.reserve(std::min(k, beam.size()));
   for (std::size_t i = 0; i < beam.size() && i < k; ++i) out.push_back({beam[i].dist, beam[i].id});
+  return out;
+}
+
+std::vector<Neighbor> VamanaIndex::search_pq(const ProductQuantizer& pq, std::span<const std::uint8_t> codes,
+                                             const float* query, std::size_t k, std::size_t L,
+                                             std::size_t rerank, SearchStats* stats) const {
+  if (degree_.empty()) throw std::logic_error("search before build");
+  if (pq.dim() != base_.dim || codes.size() != base_.n * pq.m()) {
+    throw std::invalid_argument("the codes do not belong to the indexed vectors");
+  }
+
+  Scratch& s = scratch();
+  s.table.resize(pq.table_size());
+  pq.distance_table(query, s.table.data());
+  const float* table = s.table.data();
+  const std::uint8_t* code = codes.data();
+  const std::size_t m = pq.m();
+  walk([&](std::uint32_t id) { return pq.distance(table, code + id * m); },
+       [&](std::uint32_t id) { prefetch_bytes(code + id * m); }, std::max(L, k), nullptr, stats);
+
+  const std::vector<Candidate>& beam = s.beam;
+  std::vector<Neighbor> out;
+  if (rerank == 0) {
+    for (std::size_t i = 0; i < beam.size() && i < k; ++i) out.push_back({beam[i].dist, beam[i].id});
+    return out;
+  }
+
+  // The codes only had to get the right vectors into the beam; the real vectors put them in order.
+  const std::size_t scored = std::min(beam.size(), std::max(rerank, k));
+  out.reserve(scored);
+  for (std::size_t i = 0; i < scored; ++i) {
+    out.push_back({l2_sq(query, base_.row(beam[i].id), base_.dim), beam[i].id});
+  }
+  std::sort(out.begin(), out.end());
+  if (out.size() > k) out.resize(k);
+  if (stats != nullptr) stats->rerank_comps = static_cast<std::uint32_t>(scored);
   return out;
 }
 
