@@ -1,5 +1,7 @@
 # needle
 
+[![CI](https://github.com/chandranisaha/needle/actions/workflows/ci.yml/badge.svg)](https://github.com/chandranisaha/needle/actions/workflows/ci.yml)
+
 A vector search engine written from scratch in C++20. It builds a Vamana graph index (the algorithm
 from the DiskANN paper) and answers nearest-neighbour queries without scanning every vector. No
 dependencies beyond the standard library.
