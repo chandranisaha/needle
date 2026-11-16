@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Needle Search Visualizer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  /* Layout: one full-screen star map; a single control panel (left rail on desktop, bottom sheet on phones). */
+  :root {
+    color-scheme: dark;
+    --bg: #070a13;
+    --panel: rgba(13, 18, 31, 0.9);
+    --line: rgba(255, 255, 255, 0.1);
+    --text: #e8ecf6;
+    --muted: #8e99b3;
+    --amber: #ffb454;
+    --green: #7ee787;
+    --red: #ff7b72;
+    --cyan: #5cc8ff;
+    --blue: #7089ff;
+    --violet: #c792ff;
+    --display: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+
+  .panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow: auto;
+    padding: 18px 18px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  h1 { margin: 0; font: 700 24px/1 var(--display); letter-spacing: -0.02em; }
+  h1 i { font-style: normal; color: var(--amber); }
+  .sub { margin: 6px 0 14px; color: var(--muted); font-size: 13px; }
+
+  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; margin-bottom: 14px;
+    background: rgba(255, 255, 255, 0.05); border-radius: 11px; }
+  .tabs button { padding: 8px 4px; border: 0; border-radius: 8px; background: transparent; color: var(--muted);
+    font: 500 13px var(--display); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--amber); color: #1b1304; }
+
+  .big { font: 700 44px/1 var(--mono); color: var(--amber); font-variant-numeric: tabular-nums; }
+  .big.brute { color: var(--blue); }
+  .of { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+  .bars { display: grid; gap: 6px; margin-bottom: 12px; }
+  .bar { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--muted); }
+  .track { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+  .fill { height: 100%; width: 0; border-radius: 4px; background: var(--amber); }
+  .fill.all { width: 100%; background: var(--blue); opacity: 0.55; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+  .stat { padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+  .stat b { display: block; font: 700 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 11.5px; }
+  .caption { min-height: 2.9em; margin: 0 0 10px; font-size: 13px; }
+
+  label.row { display: grid; grid-template-columns: 104px 1fr 38px; align-items: center; gap: 8px;
+    margin: 7px 0; color: var(--muted); font-size: 13px; }
+  label.row output { color: var(--text); text-align: right; font: 500 12px var(--mono); }
+  input[type=range] { width: 100%; accent-color: var(--amber); }
+  label.check { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: var(--muted); font-size: 13px; }
+  input[type=checkbox] { accent-color: var(--amber); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 10px; }
+  .buttons button { padding: 10px 8px; border-radius: 10px; border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.06); color: var(--text); font: 500 13px var(--display); cursor: pointer; }
+  .buttons button:hover { background: rgba(255, 255, 255, 0.12); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .legend i.dash { width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; }
+  .note { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .tile { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  .tile b { display: block; font: 700 20px/1.2 var(--mono); color: var(--amber); font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 12px; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  .chart text { fill: var(--muted); font: 10px var(--mono); }
+  .chart .grid { stroke: var(--line); stroke-width: 1; }
+  .chart-title { margin: 0 0 4px; font: 500 13px var(--display); }
+
+  /* Type tab: a search box floating over the map, results and steering dials in the panel. */
+  .typebar { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: calc(380px + (100% - 380px) / 2);
+    transform: translateX(-50%); width: min(560px, calc(100% - 440px)); z-index: 2; }
+  .field { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 16px; background: var(--panel);
+    border: 1px solid rgba(255, 180, 84, 0.45); border-radius: 14px; backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); box-shadow: 0 0 34px rgba(255, 180, 84, 0.12); }
+  .field input { flex: 1; min-width: 0; padding: 10px 0; border: 0; outline: 0; background: transparent;
+    color: var(--text); font: 500 18px var(--display); }
+  .field input::placeholder { color: var(--muted); }
+  .field button { width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent;
+    color: var(--muted); font-size: 20px; cursor: pointer; }
+  .field #flow { width: auto; padding: 0 12px; border: 1px solid rgba(255, 180, 84, 0.5); color: var(--amber);
+    font: 500 13px var(--display); }
+  .field #flow[aria-pressed="true"] { background: var(--amber); color: #1b1304; }
+  .stream { display: flex; flex-wrap: wrap; align-content: flex-end; gap: 0 7px; max-height: 5.1em; overflow: hidden;
+    margin-top: 8px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    color: var(--muted); font: 500 15px/1.5 var(--display); backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); }
+  .stream span:nth-last-child(-n+8) { color: var(--text); }
+  .stream span.now { color: var(--amber); }
+  .chips { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips button { flex: none; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--muted); font: 500 12px var(--mono); cursor: pointer; }
+  .chips button:hover { color: var(--text); }
+  .miss { margin: 6px 4px 0; color: var(--red); font-size: 12px; }
+  .cols { display: flex; flex-direction: column; }
+  .cols #tSteer { order: -1; margin-bottom: 8px; }
+  .mini { margin: 4px 0 6px; font: 500 12px var(--display); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); }
+  .results { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 2px; }
+  .results button { display: grid; grid-template-columns: 96px 1fr 34px; align-items: center; gap: 8px; width: 100%;
+    padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--text);
+    font: 500 13px var(--display); text-align: left; cursor: pointer; }
+  .results button:hover { background: rgba(255, 255, 255, 0.07); }
+  .results .w { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .results .fill { width: auto; background: var(--green); }
+  .results .fill.off { background: var(--red); }
+  .results .pct { color: var(--muted); font: 500 11px var(--mono); text-align: right; }
+  label.dial { display: grid; grid-template-columns: 76px 1fr 76px; align-items: center; gap: 8px; margin: 6px 0;
+    color: var(--muted); font-size: 12.5px; }
+  label.dial span:last-child { text-align: right; }
+  label.dial span.on { color: var(--amber); }
+  .pull { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; margin: 6px 0;
+    color: var(--muted); font-size: 12.5px; }
+  .pull input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05); color: var(--text); font: 500 14px var(--display); }
+  .linkish { padding: 6px 0; border: 0; background: transparent; color: var(--cyan); font: 500 12.5px var(--display);
+    cursor: pointer; }
+
+  @media (max-width: 760px) {
+    .typebar { left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
+      top: calc(10px + env(safe-area-inset-top, 0px)); width: auto; transform: none; }
+    .field input { font-size: 17px; padding: 8px 0; }
+    .chips button { min-height: 34px; }
+    .panel.typing { max-height: 46%; }
+    .results { grid-template-columns: 1fr 1fr; gap: 0 10px; }
+    .results button { grid-template-columns: 1fr 30px; min-height: 34px; }
+    .results .track { display: none; }
+    label.dial { min-height: 36px; }
+    #pane-type .stat { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; }
+    #pane-type .stat b { font-size: 14px; }
+    #pane-type .caption { font-size: 12.5px; margin-bottom: 6px; }
+    .panel { top: auto; bottom: 0; left: 0; width: 100%; max-height: 50%; border-radius: 16px 16px 0 0;
+      border-width: 1px 0 0;
+      padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px))
+        max(16px, env(safe-area-inset-left, 0px)); }
+    .panel.tall { max-height: 68%; }
+    .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    h1 { font-size: 20px; }
+    .sub { margin: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .tabs { margin-bottom: 10px; }
+    .tabs button { min-height: 40px; }
+    .hero { display: flex; align-items: baseline; gap: 10px; }
+    .big { font-size: 32px; }
+    .of { margin: 0 0 8px; }
+    .caption { min-height: 0; }
+    .buttons button { min-height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<canvas id="view" aria-label="Map of points with an animated nearest-neighbour search"></canvas>
+
+<div class="typebar" id="typebar">
+  <div class="field">
+    <input id="q" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+      enterkeyhint="search" placeholder="Type words, like: ocean storm" aria-label="Words to search for">
+    <button id="flow" type="button" aria-pressed="false">Flow</button>
+    <button id="qClear" type="button" aria-label="Clear the words">&times;</button>
+  </div>
+  <div class="chips" id="examples"></div>
+  <div class="stream" id="stream" aria-live="off" hidden></div>
+  <p class="miss" id="miss" hidden></p>
+</div>
+
+<section class="panel" id="panel">
+  <header class="head">
+    <h1>needle<i>.</i></h1>
+    <p class="sub">A vector search engine written from scratch in C++.</p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button type="button" role="tab" id="tab-type" data-tab="type" aria-selected="true">Type</button>
+    <button type="button" role="tab" id="tab-search" data-tab="search" aria-selected="false">Search</button>
+    <button type="button" role="tab" id="tab-build" data-tab="build" aria-selected="false">Build</button>
+    <button type="button" role="tab" id="tab-bench" data-tab="bench" aria-selected="false">Speed</button>
+  </nav>
+
+  <div id="pane-type" role="tabpanel" aria-labelledby="tab-type">
+    <div class="hero">
+      <div class="big" id="tCount">0</div>
+      <div class="of" id="tOf">words compared</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="tHops">-</b><span>hops</span></div>
+      <div class="stat"><b id="tRight">-</b><span>of top 10 right</span></div>
+      <div class="stat"><b id="tSaved">-</b><span>less work</span></div>
+    </div>
+    <p class="caption" id="tCaption">Loading 20,000 word vectors.</p>
+
+    <div class="cols">
+      <div id="tClosest">
+        <h2 class="mini">Closest words</h2>
+        <ol class="results" id="tResults"></ol>
+      </div>
+      <div id="tSteer">
+        <h2 class="mini">Steer the query</h2>
+        <div id="dials"></div>
+        <div class="pull">
+          <span>pull toward</span>
+          <input id="pullWord" type="text" autocomplete="off" autocapitalize="none" autocorrect="off"
+            spellcheck="false" placeholder="any word" aria-label="Word to pull the query toward">
+        </div>
+        <label class="dial"><span>off</span><input id="pull" type="range" min="0" max="100" value="60"
+          aria-label="How hard to pull toward that word"><span>hard</span></label>
+        <button class="linkish" id="tReset" type="button">Reset the dials</button>
+      </div>
+    </div>
+    <label class="check"><input id="tSound" type="checkbox">Sound</label>
+    <p class="note">Every word is a point in 64 dimensions, placed so that words used in similar ways sit close
+    together (GloVe vectors from Stanford, 20,000 most common words). The C++ engine built the index. Each
+    keystroke and each dial movement runs a new search in your browser with a JavaScript port of it.</p>
+  </div>
+
+  <div id="pane-search" role="tabpanel" aria-labelledby="tab-search" hidden>
+    <div class="hero">
+      <div class="big" id="count">0</div>
+      <div class="of" id="countOf">points compared</div>
+    </div>
+    <div class="bars">
+      <div class="bar"><span>this search</span><div class="track"><div class="fill" id="fill"></div></div></div>
+      <div class="bar"><span>brute force</span><div class="track"><div class="fill all"></div></div></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="hops">0</b><span>hops</span></div>
+      <div class="stat"><b id="correct">-</b><span>of top <span id="kLabel">10</span> right</span></div>
+      <div class="stat"><b id="saved">-</b><span>less work</span></div>
+    </div>
+    <p class="caption" id="caption"><span id="verb">Click</span> anywhere on the map to search.</p>
+
+    <label class="row">Search width<input id="width" type="range" min="1" max="200" value="40"><output id="widthOut">40</output></label>
+    <label class="row">Results<input id="k" type="range" min="1" max="20" value="10"><output id="kOut">10</output></label>
+    <label class="row">Speed<input id="speed" type="range" min="1" max="5" value="3"><output id="speedOut">3</output></label>
+    <label class="check"><input id="edges" type="checkbox">Show every graph edge</label>
+    <label class="check"><input id="auto" type="checkbox" checked>Keep searching on its own</label>
+
+    <div class="buttons">
+      <button id="random" type="button">Random search</button>
+      <button id="brute" type="button">Brute force it</button>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--cyan)"></i>entry point</span>
+      <span><i style="background:var(--amber)"></i>compared</span>
+      <span><i style="background:var(--green)"></i>correct result</span>
+      <span><i style="background:var(--red)"></i>missed</span>
+    </div>
+    <p class="note">The graph over these <span id="total"></span> points was built by the C++ engine. This page
+    walks it with a JavaScript port of the engine's beam search.</p>
+  </div>
+
+  <div id="pane-build" role="tabpanel" aria-labelledby="tab-build" hidden>
+    <div class="hero">
+      <div class="big" id="bCount">0</div>
+      <div class="of" id="bOf">points inserted</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="bEdges">0</b><span>edges</span></div>
+      <div class="stat"><b id="bDegree">0</b><span>per point</span></div>
+      <div class="stat"><b id="bLong">0</b><span>long edges</span></div>
+    </div>
+    <p class="caption" id="bCaption"></p>
+
+    <label class="row">Speed<input id="bSpeed" type="range" min="1" max="5" value="3"><output id="bSpeedOut">3</output></label>
+    <label class="row">Long-edge bias<input id="bAlpha" type="range" min="10" max="20" value="12"><output id="bAlphaOut">1.2</output></label>
+    <label class="row">Edges per point<input id="bR" type="range" min="3" max="14" value="8"><output id="bROut">8</output></label>
+
+    <div class="buttons">
+      <button id="bPlay" type="button">Pause</button>
+      <button id="bRestart" type="button">Restart</button>
+    </div>
+    <div class="legend">
+      <span><i class="dash" style="background:var(--blue)"></i>short edge</span>
+      <span><i class="dash" style="background:var(--violet)"></i>long edge</span>
+      <span><i style="background:var(--amber)"></i>newest point</span>
+    </div>
+    <p class="note">Each new point searches the graph so far, then keeps only the neighbours that point in
+    different directions. Raise the long-edge bias and the second pass keeps more shortcuts across the map,
+    which is what lets a search cross it in a few hops.</p>
+  </div>
+
+  <div id="pane-bench" role="tabpanel" aria-labelledby="tab-bench" hidden>
+    <div class="tiles" id="tiles"></div>
+    <p class="chart-title">Speed against accuracy, 1,000,000 vectors</p>
+    <div class="chart" id="chart"></div>
+    <div class="legend" id="chartLegend"></div>
+    <p class="note" id="benchNote"></p>
+  </div>
+</section>
+
+<script src="graph.js"></script>
+<script>
+(() => {
+  // Measured by bench/compare_sift1m.sh. Each point is [recall@10, queries per second].
+  const BENCH = {
+    tiles: [
+      { value: '1,000,000', label: 'vectors, 128 dimensions each (SIFT1M)' },
+      { value: '5,777/s', label: 'searches on one thread, 98.5% correct' },
+      { value: '145x', label: 'faster than checking every vector' },
+      { value: '74 s', label: 'to build the index on 14 threads' },
+    ],
+    series: [
+      { name: 'needle', color: '#ffb454',
+        pts: [[0.7738, 25856], [0.8850, 16567], [0.9492, 9387], [0.9851, 5777], [0.9955, 3151], [0.9988, 1595]] },
+      { name: 'hnswlib', color: '#d5dbea', dash: true,
+        pts: [[0.6859, 27838], [0.8193, 19691], [0.9153, 11895], [0.9720, 7202], [0.9925, 3900], [0.9981, 2210]] },
+      { name: 'needle before SIMD and the pruning fix', color: '#7089ff',
+        pts: [[0.7012, 9440], [0.8213, 6328], [0.8993, 4009], [0.9517, 2565], [0.9780, 1426], [0.9909, 820]] },
+    ],
+    note: 'Top-10 accuracy over 1,000 queries, one search thread, both libraries run back to back on the same ' +
+      'laptop. hnswlib is the open-source library many vector databases build on (M = 16, efConstruction = 200). ' +
+      'needle uses R = 32, L = 64, alpha = 1.2. The two curves sit within about 10% of each other, which is ' +
+      'inside this laptop\'s run-to-run noise.',
+  };
+
+  const D = window.NEEDLE_GRAPH;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const C = { amber: css('--amber'), green: css('--green'), red: css('--red'), cyan: css('--cyan'),
+              blue: css('--blue'), violet: css('--violet'), bg: css('--bg') };
+  const SEARCH_SPEEDS = [5, 12, 25, 60, 240];   // hops per second
+  const BUILD_SPEEDS = [3, 12, 45, 160, 700];   // inserts per second
+
+  // ---------- the two graphs: the C++-built one, and a small one this page builds live ----------
+  const off = Uint32Array.from(D.offsets), edg = Uint32Array.from(D.edges);
+  const main = { n: D.n, pts: Float32Array.from(D.points), medoid: D.medoid,
+                 adj: (v) => edg.subarray(off[v], off[v + 1]) };
+  const BN = 700, stride = Math.floor(D.n / BN);
+  const small = { n: BN, pts: new Float32Array(2 * BN), medoid: 0, lists: [], adj: (v) => small.lists[v] };
+  for (let i = 0; i < BN; i++) {
+    small.pts[2 * i] = main.pts[2 * i * stride];
+    small.pts[2 * i + 1] = main.pts[2 * i * stride + 1];
+  }
+  for (const g of [main, small]) {
+    g.sx = new Float32Array(g.n); g.sy = new Float32Array(g.n);
+    g.stamp = new Uint32Array(g.n); g.epoch = 0;
+  }
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < main.n; i++) {
+    minX = Math.min(minX, main.pts[2 * i]); maxX = Math.max(maxX, main.pts[2 * i]);
+    minY = Math.min(minY, main.pts[2 * i + 1]); maxY = Math.max(maxY, main.pts[2 * i + 1]);
+  }
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, worldR = Math.max(maxX - minX, maxY - minY) / 2;
+
+  // Points near the core are drawn warmer, the rim cooler.
+  const TINTS = ['rgba(255, 233, 196, 0.85)', 'rgba(214, 214, 240, 0.7)', 'rgba(168, 184, 236, 0.62)',
+                 'rgba(132, 150, 226, 0.55)', 'rgba(112, 124, 204, 0.5)'];
+  const tint = new Uint8Array(main.n);
+  for (let i = 0; i < main.n; i++) {
+    const r = Math.hypot(main.pts[2 * i] - cx, main.pts[2 * i + 1] - cy) / worldR;
+    tint[i] = Math.min(TINTS.length - 1, Math.floor(r * TINTS.length * 1.15));
+  }
+
+  // ---------- canvas and layout ----------
+  const canvas = $('view'), ctx = canvas.getContext('2d');
+  const base = document.createElement('canvas'), bctx = base.getContext('2d');
+  const panel = $('panel');
+  let W = 0, H = 0, scale = 1, ox = 0, oy = 0, tab = 'type';
+  const toX = (x) => ox + (x - minX) * scale, toY = (y) => oy + (y - minY) * scale;
+
+  function layout() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    for (const c of [canvas, base]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const narrow = W <= 760;
+    const sheet = narrow ? panel.getBoundingClientRect().height : 0;
+    const left = narrow ? 14 : 380, right = narrow ? 14 : 28, top = narrow ? 14 : 28;
+    const bottom = narrow ? sheet + 14 : 28;
+    const availW = Math.max(60, W - left - right), availH = Math.max(60, H - top - bottom);
+    const barBottom = tab === 'type' ? $('typebar').getBoundingClientRect().bottom + 6 : top;
+    T.fit = Math.min(availW, Math.max(60, H - barBottom - bottom));
+    T.cx = left + availW / 2;
+    T.cy = barBottom + Math.max(60, H - barBottom - bottom) / 2;
+    scale = Math.min(availW / (maxX - minX), availH / (maxY - minY));
+    ox = left + (availW - (maxX - minX) * scale) / 2;
+    oy = top + (availH - (maxY - minY) * scale) / 2;
+    for (const g of [main, small]) {
+      for (let i = 0; i < g.n; i++) { g.sx[i] = toX(g.pts[2 * i]); g.sy[i] = toY(g.pts[2 * i + 1]); }
+    }
+    drawBase();
+  }
+
+  function drawBase() {
+    bctx.fillStyle = C.bg;
+    bctx.fillRect(0, 0, W, H);
+    const glow = bctx.createRadialGradient(toX(cx), toY(cy), 0, toX(cx), toY(cy), worldR * scale * 1.1);
+    glow.addColorStop(0, 'rgba(96, 110, 190, 0.20)');
+    glow.addColorStop(0.5, 'rgba(60, 70, 140, 0.07)');
+    glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    bctx.fillStyle = glow;
+    bctx.fillRect(0, 0, W, H);
+    if (tab === 'build') return;
+
+    if ($('edges').checked) {
+      bctx.strokeStyle = 'rgba(120, 150, 220, 0.10)';
+      bctx.lineWidth = 0.5;
+      bctx.beginPath();
+      for (let v = 0; v < main.n; v++) {
+        for (let e = off[v]; e < off[v + 1]; e++) {
+          bctx.moveTo(main.sx[v], main.sy[v]); bctx.lineTo(main.sx[edg[e]], main.sy[edg[e]]);
+        }
+      }
+      bctx.stroke();
+    }
+    for (let t = 0; t < TINTS.length; t++) {
+      bctx.fillStyle = TINTS[t];
+      const s = t === 0 ? 2 : 1.6;
+      for (let i = 0; i < main.n; i++) if (tint[i] === t) bctx.fillRect(main.sx[i] - s / 2, main.sy[i] - s / 2, s, s);
+    }
+  }
+
+  // ---------- algorithms (ports of the C++ in src/vamana.cpp) ----------
+  const d2 = (g, qx, qy, i) => { const dx = g.pts[2 * i] - qx, dy = g.pts[2 * i + 1] - qy; return dx * dx + dy * dy; };
+
+  // VamanaIndex::beam_search, recording each hop for the animation.
+  function beamSearch(g, qx, qy, L) {
+    g.epoch++;
+    const m = g.medoid;
+    const beam = [{ d: d2(g, qx, qy, m), id: m, done: false }];
+    const steps = [];
+    g.stamp[m] = g.epoch;
+    let cursor = 0;
+    while (cursor < beam.length) {
+      if (beam[cursor].done) { cursor++; continue; }
+      const cur = beam[cursor];
+      cur.done = true;
+      const found = [];
+      let next = cursor + 1;
+      for (const nb of g.adj(cur.id)) {
+        if (g.stamp[nb] === g.epoch) continue;
+        g.stamp[nb] = g.epoch;
+        found.push(nb);
+        const d = d2(g, qx, qy, nb);
+        if (beam.length === L && d >= beam[L - 1].d) continue;
+        let lo = 0, hi = beam.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (d < beam[mid].d) hi = mid; else lo = mid + 1; }
+        beam.splice(lo, 0, { d, id: nb, done: false });
+        if (beam.length > L) beam.pop();
+        if (lo < next) next = lo;
+      }
+      steps.push({ node: cur.id, found });
+      cursor = next;
+    }
+    return { steps, beam };
+  }
+
+  function exactTopK(g, qx, qy, k) {
+    const dist = new Float32Array(g.n);
+    for (let i = 0; i < g.n; i++) dist[i] = d2(g, qx, qy, i);
+    const order = Array.from({ length: g.n }, (_, i) => i);
+    order.sort((a, b) => dist[a] - dist[b] || a - b);
+    return order.slice(0, k);
+  }
+
+  // VamanaIndex::robust_prune: keep a candidate only if no kept neighbour already covers its direction.
+  // Two sweeps: first only candidates nothing covers, then whatever the long-edge bias lets through.
+  function robustPrune(pool, alpha, R) {
+    pool.sort((a, b) => a.d - b.d || a.id - b.id);
+    const taken = new Uint8Array(pool.length), occlusion = new Float32Array(pool.length);
+    const kept = [], a2 = alpha * alpha;
+    for (const limit of a2 > 1 ? [1, a2] : [1]) {
+      for (let i = 0; i < pool.length && kept.length < R; i++) {
+        if (taken[i] || occlusion[i] >= limit) continue;
+        taken[i] = 1;
+        const id = pool[i].id;
+        kept.push(id);
+        for (let j = i + 1; j < pool.length; j++) {
+          if (taken[j] || occlusion[j] >= a2) continue;
+          const between = d2(small, small.pts[2 * id], small.pts[2 * id + 1], pool[j].id);
+          occlusion[j] = Math.max(occlusion[j], between > 0 ? pool[j].d / between : Infinity);
+        }
+      }
+    }
+    return kept;
+  }
+
+  // ---------- live build (VamanaIndex::build and insert_point) ----------
+  const B = { R: 8, L: 24, alpha: 1.2, order: [], idx: 0, pass: 0, done: false, playing: true,
+              inserted: new Uint8Array(BN), last: null, clock: 0, owed: 0 };
+  const longEdge2 = Math.pow(0.16 * worldR, 2);
+
+  function resetBuild() {
+    small.lists = Array.from({ length: BN }, () => []);
+    let mx = 0, my = 0;
+    for (let i = 0; i < BN; i++) { mx += small.pts[2 * i]; my += small.pts[2 * i + 1]; }
+    mx /= BN; my /= BN;
+    let best = 0;
+    for (let i = 1; i < BN; i++) if (d2(small, mx, my, i) < d2(small, mx, my, best)) best = i;
+    small.medoid = best;
+    B.order = Array.from({ length: BN }, (_, i) => i);
+    for (let i = BN - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [B.order[i], B.order[j]] = [B.order[j], B.order[i]];
+    }
+    B.idx = 0; B.pass = 0; B.done = false; B.last = null; B.owed = 0; B.clock = 0;
+    B.inserted.fill(0);
+    if (S && S.g === small) S = null;
+  }
+
+  function insertOne() {
+    const p = B.order[B.idx], alpha = B.pass === 0 ? 1 : B.alpha;
+    const px = small.pts[2 * p], py = small.pts[2 * p + 1];
+    const run = beamSearch(small, px, py, B.L);
+    const pool = [];
+    for (const st of run.steps) if (st.node !== p) pool.push({ d: d2(small, px, py, st.node), id: st.node });
+    for (const nb of small.lists[p]) pool.push({ d: d2(small, px, py, nb), id: nb });
+    const kept = robustPrune(pool, alpha, B.R);
+    small.lists[p] = kept;
+
+    // Reverse edges: each new neighbour points back, re-pruning its own list when it is full.
+    for (const j of kept) {
+      const lj = small.lists[j];
+      if (lj.includes(p)) continue;
+      if (lj.length < B.R) { lj.push(p); continue; }
+      const jx = small.pts[2 * j], jy = small.pts[2 * j + 1];
+      const back = lj.map((t) => ({ d: d2(small, jx, jy, t), id: t }));
+      back.push({ d: d2(small, jx, jy, p), id: p });
+      small.lists[j] = robustPrune(back, alpha, B.R);
+    }
+    B.inserted[p] = 1;
+    B.last = { p, path: run.steps.map((s) => s.node) };
+    if (++B.idx === BN) { B.idx = 0; if (++B.pass === 2) B.done = true; }
+  }
+
+  function stepBuild(now) {
+    const dt = B.clock ? Math.min(0.25, (now - B.clock) / 1000) : 0;
+    B.clock = now;
+    if (!B.playing || B.done) return;
+    B.owed += dt * BUILD_SPEEDS[+$('bSpeed').value - 1];
+    let budget = 60;
+    while (B.owed >= 1 && !B.done && budget-- > 0) { insertOne(); B.owed -= 1; }
+    if (budget <= 0) B.owed = 0;
+  }
+
+  function drawBuild(now) {
+    const g = small;
+    let edges = 0, longCount = 0;
+    for (const [isLong, style] of [[false, 'rgba(112, 137, 255, 0.34)'], [true, 'rgba(199, 146, 255, 0.62)']]) {
+      ctx.strokeStyle = style;
+      ctx.lineWidth = isLong ? 1.1 : 0.8;
+      ctx.beginPath();
+      for (let v = 0; v < BN; v++) {
+        for (const nb of g.lists[v]) {
+          const far = d2(g, g.pts[2 * v], g.pts[2 * v + 1], nb) > longEdge2;
+          if (far !== isLong) continue;
+          if (isLong) longCount++;
+          edges++;
+          ctx.moveTo(g.sx[v], g.sy[v]); ctx.lineTo(g.sx[nb], g.sy[nb]);
+        }
+      }
+      ctx.stroke();
+    }
+    for (let i = 0; i < BN; i++) {
+      ctx.fillStyle = B.inserted[i] ? 'rgba(226, 232, 255, 0.95)' : 'rgba(150, 165, 210, 0.28)';
+      const s = B.inserted[i] ? 3 : 2.2;
+      ctx.fillRect(g.sx[i] - s / 2, g.sy[i] - s / 2, s, s);
+    }
+    ring(g.sx[g.medoid], g.sy[g.medoid], 7, C.cyan, 1.5);
+    dot(g.sx[g.medoid], g.sy[g.medoid], 2.5, C.cyan);
+
+    if (B.last && !B.done && !(S && S.g === small)) {
+      const { p, path } = B.last;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(92, 200, 255, 0.5)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(g.sx[path[0]], g.sy[path[0]]);
+      for (const v of path.slice(0, 12)) ctx.lineTo(g.sx[v], g.sy[v]);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 180, 84, 0.9)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (const nb of g.lists[p]) { ctx.moveTo(g.sx[p], g.sy[p]); ctx.lineTo(g.sx[nb], g.sy[nb]); }
+      ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+      dot(g.sx[p], g.sy[p], 3.5, C.amber);
+      ring(g.sx[p], g.sy[p], 9 + Math.sin(now / 120) * 1.5, C.amber, 1.4);
+    }
+
+    const insertedCount = B.done ? BN : (B.pass === 0 ? B.idx : BN);
+    $('bCount').textContent = fmt(insertedCount);
+    $('bOf').textContent = `of ${BN} points inserted`;
+    $('bEdges').textContent = fmt(edges);
+    $('bDegree').textContent = (edges / Math.max(1, insertedCount)).toFixed(1);
+    $('bLong').textContent = fmt(longCount);
+    if (!(S && S.g === small)) {
+      $('bCaption').textContent = B.done
+        ? `Done. ${tapWord} the map to search the graph you just watched being built.`
+        : B.pass === 0
+          ? 'Pass 1 of 2: each point links to the nearest points inserted so far. Early links are long because the map is still empty.'
+          : `Pass 2 of 2: every point is revisited with a long-edge bias of ${B.alpha.toFixed(1)}. Watch the shortcuts appear.`;
+    }
+  }
+
+  // ---------- search animation ----------
+  let S = null, interacted = false, idleUntil = 0, hover = -1;
+  const tapWord = window.matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
+
+  function start(g, qx, qy, mode) {
+    const k = Math.min(+$('k').value, g.n), L = Math.max(+$('width').value, k);
+    const exact = exactTopK(g, qx, qy, k);
+    const run = beamSearch(g, qx, qy, L);
+    let maxR = 0;
+    for (let i = 0; i < g.n; i++) maxR = Math.max(maxR, Math.hypot(g.sx[i] - toX(qx), g.sy[i] - toY(qy)));
+    S = { g, qx, qy, mode, k, exact, exactSet: new Set(exact), steps: run.steps,
+          result: run.beam.slice(0, k).map((b) => b.id), progress: 0, radius: 0, maxR, done: false,
+          t0: performance.now() };
+    $('count').classList.toggle('brute', mode === 'brute');
+    $('fill').style.background = mode === 'brute' ? C.blue : C.amber;
+    $('correct').textContent = '-';
+    $('saved').textContent = '-';
+  }
+
+  function randomQuery() {
+    const i = Math.floor(Math.random() * main.n);
+    const jitter = () => (Math.random() - 0.5) * 0.08;
+    start(main, main.pts[2 * i] + jitter(), main.pts[2 * i + 1] + jitter(), 'graph');
+  }
+
+  function ring(x, y, r, color, width) {
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+  }
+  function dot(x, y, r, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawGraphSearch(shown, frac) {
+    const g = S.g;
+    let compared = 1;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255, 170, 70, 0.26)';
+    ctx.beginPath();
+    for (let s = 0; s < shown; s++) {
+      const { node, found } = S.steps[s];
+      compared += found.length;
+      for (const f of found) { ctx.moveTo(g.sx[node], g.sy[node]); ctx.lineTo(g.sx[f], g.sy[f]); }
+    }
+    ctx.stroke();
+
+    // The hop in progress: edges grow out from the current point toward each neighbour it checks.
+    if (shown < S.steps.length) {
+      const { node, found } = S.steps[shown];
+      ctx.strokeStyle = 'rgba(255, 200, 120, 0.8)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      for (const f of found) {
+        const tx = g.sx[node] + (g.sx[f] - g.sx[node]) * frac, ty = g.sy[node] + (g.sy[f] - g.sy[node]) * frac;
+        ctx.moveTo(g.sx[node], g.sy[node]); ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+      ctx.fillStyle = '#fff1d6';
+      for (const f of found) {
+        const tx = g.sx[node] + (g.sx[f] - g.sx[node]) * frac, ty = g.sy[node] + (g.sy[f] - g.sy[node]) * frac;
+        ctx.fillRect(tx - 1.2, ty - 1.2, 2.4, 2.4);
+      }
+    }
+
+    ctx.fillStyle = 'rgba(255, 180, 84, 0.9)';
+    for (let s = 0; s < shown; s++) {
+      for (const f of S.steps[s].found) ctx.fillRect(g.sx[f] - 1.4, g.sy[f] - 1.4, 2.8, 2.8);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // The route actually taken, hop to hop.
+    ctx.strokeStyle = 'rgba(255, 236, 200, 0.55)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let s = 0; s <= Math.min(shown, S.steps.length - 1); s++) {
+      const v = S.steps[s].node;
+      if (s === 0) ctx.moveTo(g.sx[v], g.sy[v]); else ctx.lineTo(g.sx[v], g.sy[v]);
+    }
+    ctx.stroke();
+    for (let s = 0; s < shown; s++) dot(g.sx[S.steps[s].node], g.sy[S.steps[s].node], 2.6, '#ffe2b0');
+    if (shown < S.steps.length) {
+      const cur = S.steps[shown].node;
+      ring(g.sx[cur], g.sy[cur], 9, C.amber, 1.6);
+    }
+    return compared;
+  }
+
+  function drawBrute() {
+    const g = S.g, qsx = toX(S.qx), qsy = toY(S.qy), r2 = S.radius * S.radius;
+    let compared = 0;
+    ctx.fillStyle = 'rgba(112, 137, 255, 0.92)';
+    for (let i = 0; i < g.n; i++) {
+      const dx = g.sx[i] - qsx, dy = g.sy[i] - qsy;
+      if (dx * dx + dy * dy > r2) continue;
+      compared++;
+      ctx.fillRect(g.sx[i] - 1.1, g.sy[i] - 1.1, 2.2, 2.2);
+    }
+    if (!S.done) {
+      ring(qsx, qsy, S.radius, 'rgba(112, 137, 255, 0.6)', 1.2);
+      ring(qsx, qsy, Math.max(0, S.radius - 10), 'rgba(112, 137, 255, 0.2)', 6);
+    }
+    return compared;
+  }
+
+  function drawResults(ids, now) {
+    const g = S.g, qsx = toX(S.qx), qsy = toY(S.qy);
+    ctx.lineWidth = 1;
+    for (const id of ids) {
+      const ok = S.exactSet.has(id);
+      ctx.strokeStyle = ok ? 'rgba(126, 231, 135, 0.45)' : 'rgba(255, 123, 114, 0.45)';
+      ctx.beginPath(); ctx.moveTo(qsx, qsy); ctx.lineTo(g.sx[id], g.sy[id]); ctx.stroke();
+      dot(g.sx[id], g.sy[id], 3, ok ? C.green : C.red);
+      ring(g.sx[id], g.sy[id], 6 + Math.sin(now / 260) * 0.8, ok ? C.green : C.red, 1.4);
+    }
+  }
+
+  function drawSearch(now) {
+    const g = S.g;
+    const elapsed = Math.max(0, now - S.t0) / 1000;   // follows the clock, so a throttled tab still finishes
+    let compared = 0, hops = 0;
+
+    if (S.mode === 'graph') {
+      if (!S.done) {
+        S.progress = Math.min(S.steps.length, elapsed * SEARCH_SPEEDS[+$('speed').value - 1]);
+        if (S.progress >= S.steps.length) { S.done = true; idleUntil = now + 1800; }
+      }
+      hops = Math.floor(S.progress);
+      compared = drawGraphSearch(hops, S.progress - hops);
+      if (S.done) drawResults(S.result, now);
+    } else {
+      if (!S.done) {
+        S.radius = Math.min(S.maxR + 2, elapsed * S.maxR / 1.6);
+        if (S.radius >= S.maxR) { S.done = true; idleUntil = now + 2200; }
+      }
+      compared = drawBrute();
+      if (S.done) drawResults(S.exact, now);
+    }
+
+    const qsx = toX(S.qx), qsy = toY(S.qy);
+    ring(qsx, qsy, 10 + ((now - S.t0) / 40) % 14, 'rgba(255, 255, 255, 0.25)', 1);
+    dot(qsx, qsy, 3.5, '#ffffff');
+
+    const got = S.mode === 'graph' ? S.result.filter((id) => S.exactSet.has(id)).length : S.k;
+    const pct = (100 * compared / g.n).toFixed(1);
+    if (g === small) {
+      $('bCaption').textContent = S.done
+        ? `Found ${got} of the true top ${S.k} by comparing ${compared} of ${BN} points.`
+        : 'Searching the graph you just built.';
+      return;
+    }
+    $('count').textContent = fmt(compared);
+    $('countOf').textContent = `of ${fmt(g.n)} points compared (${pct}%)`;
+    $('fill').style.width = `${Math.max(0.5, 100 * compared / g.n)}%`;
+    $('hops').textContent = S.mode === 'graph' ? hops : '-';
+    if (S.done) {
+      $('correct').textContent = `${got}`;
+      $('saved').textContent = S.mode === 'graph' ? `${Math.round(g.n / compared)}x` : '1x';
+    }
+    $('caption').textContent = S.mode === 'brute'
+      ? (S.done ? `Same answer, but every one of the ${fmt(g.n)} points had to be compared.`
+                : 'Brute force compares the query with every single point.')
+      : S.done ? `Found ${got} of the true top ${S.k} after comparing ${pct}% of the points.`
+      : hops === 0 ? 'Every search starts at the entry point in the middle of the map.'
+      : 'Jump to the closest point not explored yet, check its neighbours, repeat.';
+  }
+
+  function drawHover() {
+    if (hover < 0 || tab !== 'search') return;
+    const g = main, nbrs = g.adj(hover);
+    ctx.strokeStyle = 'rgba(92, 200, 255, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const nb of nbrs) { ctx.moveTo(g.sx[hover], g.sy[hover]); ctx.lineTo(g.sx[nb], g.sy[nb]); }
+    ctx.stroke();
+    dot(g.sx[hover], g.sy[hover], 3, C.cyan);
+    ctx.font = '11px ui-monospace, Consolas, monospace';
+    ctx.fillStyle = 'rgba(232, 236, 246, 0.9)';
+    ctx.fillText(`point ${fmt(hover)}: ${nbrs.length} edges`, g.sx[hover] + 10, g.sy[hover] - 8);
+  }
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (window.innerWidth !== W || window.innerHeight !== H) layout();
+    if (base.width === 0 || base.height === 0) return;
+    if (tab === 'type') { drawType(now); return; }
+    ctx.drawImage(base, 0, 0, W, H);
+
+    if (tab === 'build') {
+      stepBuild(now);
+      drawBuild(now);
+    } else {
+      ring(main.sx[main.medoid], main.sy[main.medoid], 7, C.cyan, 1.5);
+      dot(main.sx[main.medoid], main.sy[main.medoid], 2.5, C.cyan);
+    }
+    if (S) drawSearch(now);
+    drawHover();
+    if (tab !== 'build' && S && S.done && $('auto').checked && !interacted && now > idleUntil) randomQuery();
+  }
+
+  // ---------- type tab: live search over real word vectors ----------
+  const DIALS = [
+    { left: 'masculine', right: 'feminine',
+      neg: ['man', 'he', 'his', 'father', 'king', 'boy', 'brother', 'son'],
+      pos: ['woman', 'she', 'her', 'mother', 'queen', 'girl', 'sister', 'daughter'] },
+    { left: 'nature', right: 'technology',
+      neg: ['forest', 'river', 'tree', 'animal', 'mountain', 'flower'],
+      pos: ['computer', 'software', 'digital', 'internet', 'machine', 'electronic'] },
+    { left: 'gloomy', right: 'cheerful',
+      neg: ['sad', 'terrible', 'awful', 'pain', 'tragic', 'grim'],
+      pos: ['happy', 'wonderful', 'joy', 'laugh', 'fun', 'cheerful'] },
+  ];
+  const EXAMPLES = ['king - man + woman', 'ocean storm', 'paris - france + japan', 'happy music', 'doctor'];
+  const STEER = 1.1, PULL = 1.6, TYPE_L = 32, TYPE_K = 10;
+  const T = { ready: false, n: 0, dim: 0, words: [], index: new Map(), vec: null, xy: null, off: null, adj: null,
+              medoid: 0, norm: 1, stamp: null, epoch: 0, cam: { x: 0.5, y: 0.5, z: 1 }, goal: { x: 0.5, y: 0.5, z: 1 },
+              cx: 0, cy: 0, fit: 1, run: null, trail: [], clock: 0, lastAt: 0, widths: new Map() };
+  const pilot = { on: true, token: 0 };
+  // Flow: the query keeps moving. Every tick the closest unused word is written out and pulls the query
+  // toward itself, so the dials bend a running stream of words instead of a single answer.
+  const F = { on: false, c: null, seen: [], stream: [], at: 0, typed: null };
+  const FLOW_MS = 280, FLOW_KEEP = 0.72, FLOW_PULL = 0.45;
+  let audio = null, lastBlip = 0;
+
+  function bytes(b64) {
+    const s = atob(b64), out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  function unitRow(i) {
+    const out = new Float32Array(T.dim);
+    let sum = 0;
+    for (let d = 0; d < T.dim; d++) { out[d] = T.vec[i * T.dim + d]; sum += out[d] * out[d]; }
+    const inv = 1 / Math.sqrt(sum);
+    for (let d = 0; d < T.dim; d++) out[d] *= inv;
+    return out;
+  }
+
+  function normalise(v) {
+    let sum = 0;
+    for (let d = 0; d < v.length; d++) sum += v[d] * v[d];
+    if (sum < 1e-9) return false;
+    const inv = 1 / Math.sqrt(sum);
+    for (let d = 0; d < v.length; d++) v[d] *= inv;
+    return true;
+  }
+
+  // A steering direction: the average of one group of words minus the average of the opposite group.
+  function direction(pos, neg) {
+    const dir = new Float32Array(T.dim);
+    for (const [group, sign] of [[pos, 1], [neg, -1]]) {
+      const known = group.filter((w) => T.index.has(w));
+      for (const w of known) {
+        const row = unitRow(T.index.get(w));
+        for (let d = 0; d < T.dim; d++) dir[d] += sign * row[d] / known.length;
+      }
+    }
+    normalise(dir);
+    return dir;
+  }
+
+  function initWords() {
+    const src = window.NEEDLE_WORDS;
+    T.n = src.n; T.dim = src.dim; T.medoid = src.medoid;
+    T.words = src.words.split(' ');
+    T.words.forEach((w, i) => T.index.set(w, i));
+    T.vec = new Int8Array(bytes(src.vec).buffer);
+    const xy = new Uint16Array(bytes(src.xy).buffer);
+    T.xy = new Float32Array(xy.length);
+    for (let i = 0; i < xy.length; i++) T.xy[i] = xy[i] / 65535;
+    const deg = bytes(src.deg);
+    T.adj = new Uint16Array(bytes(src.adj).buffer);
+    T.off = new Uint32Array(T.n + 1);
+    for (let i = 0; i < T.n; i++) T.off[i + 1] = T.off[i] + deg[i];
+    T.stamp = new Uint32Array(T.n);
+    let norms = 0;
+    for (let i = 0; i < 200; i++) {
+      let sum = 0;
+      for (let d = 0; d < T.dim; d++) sum += T.vec[i * T.dim + d] ** 2;
+      norms += Math.sqrt(sum);
+    }
+    T.norm = norms / 200;
+    for (const dial of DIALS) dial.dir = direction(dial.pos, dial.neg);
+    T.ready = true;
+    typeSearch();
+    if (tab === 'type') autopilot();
+  }
+
+  const wordDist = (q, i) => {
+    let sum = 0;
+    for (let d = 0, o = i * T.dim; d < T.dim; d++) { const t = q[d] - T.vec[o + d]; sum += t * t; }
+    return sum;
+  };
+
+  // VamanaIndex::beam_search again, over 64-dimensional word vectors instead of map points.
+  function wordBeam(q, L) {
+    T.epoch++;
+    const beam = [{ d: wordDist(q, T.medoid), id: T.medoid, done: false }];
+    const steps = [];
+    T.stamp[T.medoid] = T.epoch;
+    let cursor = 0, compared = 1;
+    while (cursor < beam.length) {
+      if (beam[cursor].done) { cursor++; continue; }
+      const cur = beam[cursor];
+      cur.done = true;
+      const found = [];
+      let next = cursor + 1;
+      for (let e = T.off[cur.id]; e < T.off[cur.id + 1]; e++) {
+        const nb = T.adj[e];
+        if (T.stamp[nb] === T.epoch) continue;
+        T.stamp[nb] = T.epoch;
+        found.push(nb);
+        compared++;
+        const d = wordDist(q, nb);
+        if (beam.length === L && d >= beam[L - 1].d) continue;
+        let lo = 0, hi = beam.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (d < beam[mid].d) hi = mid; else lo = mid + 1; }
+        beam.splice(lo, 0, { d, id: nb, done: false });
+        if (beam.length > L) beam.pop();
+        if (lo < next) next = lo;
+      }
+      steps.push({ node: cur.id, found });
+      cursor = next;
+    }
+    return { steps, beam, compared };
+  }
+
+  // The true answer, by comparing the query with all 20,000 words.
+  function wordExact(q, k, skip) {
+    const best = [];
+    for (let i = 0; i < T.n; i++) {
+      if (skip.has(i)) continue;
+      const d = wordDist(q, i);
+      if (best.length === k && d >= best[k - 1].d) continue;
+      let at = best.length;
+      while (at > 0 && best[at - 1].d > d) at--;
+      best.splice(at, 0, { d, id: i });
+      if (best.length > k) best.pop();
+    }
+    return best.map((b) => b.id);
+  }
+
+  // Typed words add up (a leading minus subtracts), then the dials push the sum along their directions.
+  function compose() {
+    const q = new Float32Array(T.dim), skip = new Set(), parts = [], missing = [];
+    for (const token of $('q').value.toLowerCase().match(/(-\s*)?[a-z]+/g) || []) {
+      const minus = token[0] === '-', word = token.replace(/^-\s*/, ''), id = T.index.get(word);
+      if (id === undefined) { missing.push(word); continue; }
+      const row = unitRow(id);
+      for (let d = 0; d < T.dim; d++) q[d] += minus ? -row[d] : row[d];
+      skip.add(id);
+      parts.push(`${parts.length === 0 ? (minus ? '- ' : '') : (minus ? ' - ' : ' + ')}${word}`);
+    }
+    const typed = normalise(q);
+    F.typed = typed ? q.slice() : null;
+    const flowing = F.on && F.c !== null;
+    if (flowing) { q.set(F.c); for (const id of F.seen) skip.add(id); }
+    for (const dial of DIALS) {
+      const s = +dial.input.value / 100;
+      dial.spans[0].classList.toggle('on', s < 0);
+      dial.spans[1].classList.toggle('on', s > 0);
+      if (s === 0) continue;
+      for (let d = 0; d < T.dim; d++) q[d] += STEER * s * dial.dir[d];
+      parts.push(`${parts.length ? ' + ' : ''}${s > 0 ? dial.right : dial.left}`);
+    }
+    const pullWord = $('pullWord').value.trim().toLowerCase(), pullId = T.index.get(pullWord);
+    const pull = +$('pull').value / 100;
+    if (pullWord && pullId === undefined) missing.push(pullWord);
+    if (pullId !== undefined && pull > 0) {
+      const row = unitRow(pullId);
+      for (let d = 0; d < T.dim; d++) q[d] += PULL * pull * row[d];
+      skip.add(pullId);
+      parts.push(`${parts.length ? ' + ' : ''}${pullWord}`);
+    }
+    $('miss').hidden = missing.length === 0;
+    $('miss').textContent = `Not among the 20,000 words: ${missing.join(', ')}`;
+    if (!typed && !flowing && !(pullId !== undefined && pull > 0)) return null;   // the dials steer a word, they are not one
+    if (!normalise(q)) return null;
+    for (let d = 0; d < T.dim; d++) q[d] *= T.norm;
+    return { q, skip, label: parts.join('') };
+  }
+
+  function typeSearch() {
+    if (!T.ready) return;
+    const now = performance.now(), query = compose();
+    if (!query) {
+      T.run = null;
+      T.goal = { x: 0.5, y: 0.5, z: 1 };
+      $('tResults').innerHTML = '';
+      for (const id of ['tHops', 'tRight', 'tSaved']) $(id).textContent = '-';
+      $('tCount').textContent = '0';
+      $('tOf').textContent = `of ${fmt(T.n)} words compared`;
+      $('tCaption').textContent = `Type a word above, or ${tapWord.toLowerCase()} any dot on the map.`;
+      return;
+    }
+    const found = wordBeam(query.q, TYPE_L);
+    const hits = found.beam.filter((b) => !query.skip.has(b.id)).slice(0, TYPE_K);
+    const exact = new Set(wordExact(query.q, TYPE_K, query.skip));
+    const sim = (d) => 1 - d / (2 * T.norm * T.norm);
+    const result = hits.map((b) => ({ id: b.id, sim: sim(b.d), ok: exact.has(b.id) }));
+
+    // The query has no place on the 2-D map, so it is drawn at the centre of its closest words.
+    let qx = 0, qy = 0, weight = 0;
+    const near = result.slice(0, 5);
+    for (const hit of near) {
+      const w = Math.max(0.05, hit.sim) ** 2;
+      qx += T.xy[2 * hit.id] * w; qy += T.xy[2 * hit.id + 1] * w; weight += w;
+    }
+    qx /= weight; qy /= weight;
+    const spread = near.map((hit) => Math.hypot(T.xy[2 * hit.id] - qx, T.xy[2 * hit.id + 1] - qy)).sort((a, b) => a - b);
+    T.goal = { x: qx, y: qy, z: Math.min(9, Math.max(2.6, 0.22 / Math.max(spread[spread.length >> 1], 0.01))) };
+    const last = T.trail[T.trail.length - 1];
+    if (!last || Math.hypot(last.x - qx, last.y - qy) > 0.004) T.trail.push({ x: qx, y: qy, at: now });
+    if (T.trail.length > 60) T.trail.shift();
+
+    T.run = { ...found, result, qx, qy, label: query.label, t0: now, instant: now - T.lastAt < 320 };
+    T.lastAt = now;
+
+    const right = result.filter((r) => r.ok).length;
+    $('tCount').textContent = fmt(found.compared);
+    $('tOf').textContent = `of ${fmt(T.n)} words compared (${(100 * found.compared / T.n).toFixed(1)}%)`;
+    $('tHops').textContent = found.steps.length;
+    $('tRight').textContent = right;
+    $('tSaved').textContent = `${Math.round(T.n / found.compared)}x`;
+    const route = found.steps.slice(1, 6).map((s) => T.words[s.node]).join(' → ');
+    $('tCaption').textContent = `Started at "${T.words[T.medoid]}", hopped through ${route}${found.steps.length > 6 ? ' …' : ''}`;
+    $('tResults').innerHTML = result.map((r) =>
+      `<li><button type="button" data-word="${T.words[r.id]}"><span class="w">${T.words[r.id]}</span>` +
+      `<span class="track"><span class="fill${r.ok ? '' : ' off'}" style="display:block;width:${Math.max(4, 100 * r.sim).toFixed(0)}%"></span></span>` +
+      `<span class="pct">${Math.round(100 * r.sim)}</span></button></li>`).join('');
+    if (result.length && !F.on) blip(220 * Math.pow(2, 2.2 * Math.max(0, result[0].sim)), now);
+  }
+
+  function blip(freq, now) {
+    if (!audio || now - lastBlip < 70) return;
+    lastBlip = now;
+    const t = audio.currentTime;
+    for (const [mult, level, type] of [[1, 0.07, 'triangle'], [2, 0.025, 'sine']]) {
+      const osc = audio.createOscillator(), gain = audio.createGain();
+      osc.type = type;
+      osc.frequency.value = freq * mult;
+      gain.gain.setValueAtTime(level, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t); osc.stop(t + 0.24);
+    }
+  }
+
+  function renderStream() {
+    $('stream').hidden = !F.on && F.stream.length === 0;
+    $('stream').innerHTML = F.stream.map((id, i) =>
+      `<span${i === F.stream.length - 1 ? ' class="now"' : ''}>${T.words[id]}</span>`).join('');
+  }
+
+  // Start the stream again from whatever is typed.
+  function restartFlow() {
+    F.c = null; F.seen = []; F.stream = [];
+    renderStream();
+  }
+
+  function setFlow(on) {
+    F.on = on;
+    $('flow').setAttribute('aria-pressed', String(on));
+    $('flow').textContent = on ? 'Stop' : 'Flow';
+    restartFlow();
+    typeSearch();
+  }
+
+  // Runs on a timer, not the animation frame, so the stream keeps its pace when frames are slow.
+  function tickFlow() {
+    const now = performance.now();
+    if (!F.on || !T.ready || tab !== 'type' || now - F.at < FLOW_MS * 0.8) return;
+    F.at = now;
+    if (F.c === null) {   // begin at the typed words, or at a random common word when nothing is typed
+      compose();
+      F.c = F.typed ? F.typed.slice() : unitRow(Math.floor(Math.random() * 2500));
+    }
+    typeSearch();
+    if (!T.run || T.run.result.length === 0) return;
+    const pick = T.run.result[0].id, row = unitRow(pick);
+    T.run.label = T.words[pick];
+    F.seen.push(pick);
+    F.stream.push(pick);
+    if (F.seen.length > 300) F.seen.shift();
+    if (F.stream.length > 40) F.stream.shift();
+    for (let d = 0; d < T.dim; d++) F.c[d] = FLOW_KEEP * F.c[d] + FLOW_PULL * row[d];
+    normalise(F.c);
+    renderStream();
+    const scale = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22];   // pitch follows the word's height on the map
+    blip(196 * Math.pow(2, scale[Math.min(9, Math.floor((1 - T.xy[2 * pick + 1]) * 10))] / 12), now);
+  }
+
+  function textWidth(text, font) {
+    const key = font + text;
+    let w = T.widths.get(key);
+    if (w === undefined) { ctx.font = font; w = ctx.measureText(text).width; T.widths.set(key, w); }
+    return w;
+  }
+
+  function drawType(now) {
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, W, H);
+    const WORD = '500 12px "Space Grotesk", system-ui, sans-serif';
+    const HIT = '700 14px "Space Grotesk", system-ui, sans-serif';
+    if (!T.ready) {
+      ctx.font = WORD; ctx.fillStyle = 'rgba(142, 153, 179, 0.9)'; ctx.textAlign = 'center';
+      ctx.fillText('Loading 20,000 word vectors…', T.cx, T.cy);
+      ctx.textAlign = 'left';
+      return;
+    }
+    const ease = 1 - Math.exp(-Math.min(1, (now - T.clock) / 1000) * 4.5);   // by the clock, so slow frames keep up
+    T.clock = now;
+    for (const key of ['x', 'y', 'z']) T.cam[key] += (T.goal[key] - T.cam[key]) * ease;
+    const s = T.fit * T.cam.z;
+    const X = (i) => T.cx + (T.xy[2 * i] - T.cam.x) * s, Y = (i) => T.cy + (T.xy[2 * i + 1] - T.cam.y) * s;
+    const PX = (x) => T.cx + (x - T.cam.x) * s, PY = (y) => T.cy + (y - T.cam.y) * s;
+
+    const glow = ctx.createRadialGradient(PX(0.5), PY(0.5), 0, PX(0.5), PY(0.5), s * 0.62);
+    glow.addColorStop(0, 'rgba(96, 110, 190, 0.16)');
+    glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    const size = Math.min(3, 1.1 + T.cam.z * 0.2), common = Math.min(T.n, 2500);
+    for (const [from, to, style] of [[common, T.n, 'rgba(132, 150, 226, 0.5)'], [0, common, 'rgba(214, 222, 250, 0.8)']]) {
+      ctx.fillStyle = style;
+      for (let i = from; i < to; i++) {
+        const x = X(i), y = Y(i);
+        if (x < -3 || x > W + 3 || y < -3 || y > H + 3) continue;
+        ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      }
+    }
+
+    // Labels never overlap: each one claims a rectangle, later ones look for a free spot or are skipped.
+    const taken = [];
+    const free = (x, y, w, h) => {
+      for (const r of taken) if (x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y) return false;
+      return true;
+    };
+    const label = (text, px, py, font, color, mustPlace) => {
+      const w = textWidth(text, font) + 6, h = 16;
+      const spots = [[9, -8], [-w - 9, -8], [-w / 2, -24], [-w / 2, 9], [9, -24], [9, 9], [-w - 9, -24], [-w - 9, 9]];
+      for (const [dx, dy] of mustPlace ? spots : spots.slice(0, 1)) {
+        const x = px + dx, y = py + dy;
+        if (x < 4 || x + w > W - 4 || y < 4 || y + h > H - 4 || !free(x, y, w, h)) continue;
+        taken.push({ x, y, w, h });
+        if (mustPlace) {
+          ctx.fillStyle = 'rgba(7, 10, 19, 0.82)';
+          ctx.beginPath(); ctx.roundRect(x - 1, y - 1, w + 2, h + 2, 5); ctx.fill();
+        }
+        ctx.font = font; ctx.fillStyle = color;
+        ctx.fillText(text, x + 3, y + 12);
+        return;
+      }
+    };
+
+    const run = T.run;
+    if (run) {
+      const progress = run.instant ? 1 : Math.min(1, (now - run.t0) / 520);
+      const shown = Math.ceil(progress * run.steps.length);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(255, 170, 70, 0.07)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let k = 0; k < shown; k++) {
+        const { node, found } = run.steps[k];
+        for (const f of found) { ctx.moveTo(X(node), Y(node)); ctx.lineTo(X(f), Y(f)); }
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 180, 84, 0.85)';
+      for (let k = 0; k < shown; k++) for (const f of run.steps[k].found) ctx.fillRect(X(f) - 1.5, Y(f) - 1.5, 3, 3);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = 'rgba(255, 236, 200, 0.3)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let k = 0; k < shown; k++) {
+        const v = run.steps[k].node;
+        if (k === 0) ctx.moveTo(X(v), Y(v)); else ctx.lineTo(X(v), Y(v));
+      }
+      ctx.stroke();
+
+      // Where the query has been: a fading trail, so steering reads as movement across the map.
+      ctx.lineWidth = 2;
+      for (let k = 1; k < T.trail.length; k++) {
+        const a = T.trail[k - 1], b = T.trail[k], age = (now - b.at) / 5000;
+        if (age >= 1) continue;
+        ctx.strokeStyle = `rgba(92, 200, 255, ${(0.7 * (1 - age)).toFixed(3)})`;
+        ctx.beginPath(); ctx.moveTo(PX(a.x), PY(a.y)); ctx.lineTo(PX(b.x), PY(b.y)); ctx.stroke();
+      }
+
+      const qsx = PX(run.qx), qsy = PY(run.qy);
+      taken.push({ x: qsx - 9, y: qsy - 9, w: 18, h: 18 });
+      if (progress >= 1) {
+        ctx.lineWidth = 1;
+        for (const hit of run.result) {
+          ctx.strokeStyle = hit.ok ? 'rgba(126, 231, 135, 0.22)' : 'rgba(255, 123, 114, 0.22)';
+          ctx.beginPath(); ctx.moveTo(qsx, qsy); ctx.lineTo(X(hit.id), Y(hit.id)); ctx.stroke();
+        }
+        run.result.forEach((hit, rank) => {
+          const x = X(hit.id), y = Y(hit.id), color = hit.ok ? C.green : C.red;
+          dot(x, y, rank === 0 ? 4.5 : 3.2, color);
+          if (rank === 0) ring(x, y, 9 + Math.sin(now / 240), color, 1.5);
+          if (F.on && rank > 2) return;   // while flowing the map belongs to the stream
+          label(T.words[hit.id], x, y, HIT, rank === 0 ? '#ffffff' : 'rgba(232, 236, 246, 0.92)', true);
+        });
+      }
+      for (const id of F.on ? F.stream.slice(-7, -1) : []) {
+        dot(X(id), Y(id), 2.6, C.amber);
+        label(T.words[id], X(id), Y(id), WORD, 'rgba(255, 190, 110, 0.9)', false);
+      }
+      for (let k = 1; k < Math.min(shown, 9); k++) {
+        const v = run.steps[k].node;
+        dot(X(v), Y(v), 2.4, '#ffe2b0');
+        label(T.words[v], X(v), Y(v), WORD, 'rgba(255, 200, 130, 0.85)', false);
+      }
+      ring(qsx, qsy, 11 + ((now - run.t0) / 45) % 12, 'rgba(255, 255, 255, 0.28)', 1);
+      dot(qsx, qsy, 4, '#ffffff');
+      if (!F.on) label(run.label, qsx, qsy, HIT, C.amber, true);
+    }
+
+    ring(X(T.medoid), Y(T.medoid), 7, C.cyan, 1.5);
+    dot(X(T.medoid), Y(T.medoid), 2.5, C.cyan);
+    label(T.words[T.medoid], X(T.medoid), Y(T.medoid), WORD, C.cyan, false);
+
+    // Background labels: the most common words that are on screen and have room.
+    let budget = T.cam.z < 2 ? 30 : 46;
+    for (let i = 0; i < T.n && budget > 0; i++) {
+      const x = X(i), y = Y(i);
+      if (x < 8 || x > W - 60 || y < 20 || y > H - 12) continue;
+      const before = taken.length;
+      label(T.words[i], x, y, WORD, 'rgba(160, 174, 214, 0.6)', false);
+      if (taken.length > before) budget--;
+    }
+  }
+
+  // Until someone touches the page it types and steers by itself, so the idea is visible at a glance.
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  function stopPilot(resetDials) {
+    if (!pilot.on) return;
+    pilot.on = false;
+    if (resetDials) for (const dial of DIALS) dial.input.value = 0;
+  }
+  async function autopilot() {
+    const me = ++pilot.token;
+    const alive = () => pilot.on && pilot.token === me && tab === 'type';
+    for (const dial of DIALS) dial.input.value = 0;
+    if (F.on) setFlow(false);
+    const flow = async (on) => { if (alive()) setFlow(on); };
+    const type = async (text, keep) => {
+      if (!keep) $('q').value = '';
+      for (const ch of text) {
+        if (!alive()) return;
+        $('q').value += ch;
+        typeSearch();
+        await sleep(120);
+      }
+    };
+    const sweep = async (dial, to, ms) => {
+      const from = +dial.input.value, t0 = performance.now();
+      while (alive()) {
+        const p = Math.min(1, (performance.now() - t0) / ms);
+        dial.input.value = Math.round(from + (to - from) * p * p * (3 - 2 * p));
+        typeSearch();
+        if (p >= 1) return;
+        await sleep(32);
+      }
+    };
+    const [gender, tech, mood] = DIALS;
+    const script = [
+      () => type('king'), () => sleep(1400), () => sweep(gender, 100, 2000), () => sleep(2200), () => sweep(gender, 0, 500),
+      () => type('ocean'), () => sleep(900), () => flow(true), () => sleep(4500),
+      () => sweep(tech, 100, 2500), () => sleep(5000), () => sweep(tech, 0, 600),
+      () => sweep(mood, 100, 2500), () => sleep(5000), () => sweep(mood, 0, 600),
+      () => sweep(gender, 100, 2500), () => sleep(4500), () => sweep(gender, 0, 600), () => sleep(1200), () => flow(false),
+      () => type('letter'), () => sleep(1300), () => sweep(tech, 100, 2200), () => sleep(2400), () => sweep(tech, 0, 500),
+    ];
+    while (alive()) {
+      for (const act of script) { if (!alive()) return; await act(); }
+    }
+  }
+
+  function setupType() {
+    $('dials').innerHTML = DIALS.map((dial, i) =>
+      `<label class="dial"><span>${dial.left}</span><input id="dial${i}" type="range" min="-100" max="100" value="0" ` +
+      `aria-label="Steer from ${dial.left} to ${dial.right}"><span>${dial.right}</span></label>`).join('');
+    DIALS.forEach((dial, i) => {
+      dial.input = $(`dial${i}`);
+      dial.spans = [dial.input.previousElementSibling, dial.input.nextElementSibling];
+      dial.input.addEventListener('input', () => { stopPilot(false); typeSearch(); });
+    });
+    $('examples').innerHTML = EXAMPLES.map((e) => `<button type="button">${e}</button>`).join('');
+    $('examples').addEventListener('click', (ev) => {
+      if (ev.target.tagName !== 'BUTTON') return;
+      stopPilot(true);
+      for (const dial of DIALS) dial.input.value = 0;
+      $('q').value = ev.target.textContent;
+      restartFlow();
+      typeSearch();
+    });
+    $('q').addEventListener('focus', () => {
+      if (!pilot.on) return;
+      stopPilot(true);
+      $('q').value = '';
+      setFlow(false);
+    });
+    $('q').addEventListener('input', () => { stopPilot(true); restartFlow(); typeSearch(); });
+    $('q').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('q').blur(); });
+    $('qClear').addEventListener('click', () => { stopPilot(true); $('q').value = ''; setFlow(false); $('q').focus(); });
+    $('flow').addEventListener('click', () => { stopPilot(false); setFlow(!F.on); });
+    for (const id of ['pullWord', 'pull']) $(id).addEventListener('input', () => { stopPilot(false); typeSearch(); });
+    $('tReset').addEventListener('click', () => {
+      stopPilot(true);
+      for (const dial of DIALS) dial.input.value = 0;
+      $('pullWord').value = '';
+      typeSearch();
+    });
+    $('tResults').addEventListener('click', (ev) => {
+      const button = ev.target.closest('button');
+      if (!button) return;
+      stopPilot(true);
+      $('q').value = `${$('q').value.trim()} ${button.dataset.word}`.trim();
+      restartFlow();
+      typeSearch();
+    });
+    $('tSound').addEventListener('change', () => {
+      if (!$('tSound').checked) { audio = null; return; }
+      try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) { $('tSound').checked = false; }
+    });
+    setInterval(tickFlow, FLOW_MS);
+    const script = document.createElement('script');
+    script.src = 'words.js';
+    script.onload = initWords;
+    script.onerror = () => { $('tCaption').textContent = 'The word vectors did not load. The other tabs still work.'; };
+    document.head.appendChild(script);
+  }
+
+  // Tapping a word on the map searches for it.
+  function tapWordAt(px, py) {
+    if (!T.ready) return;
+    const s = T.fit * T.cam.z;
+    let best = -1, bestD = 22 * 22;
+    for (let i = 0; i < T.n; i++) {
+      const dx = T.cx + (T.xy[2 * i] - T.cam.x) * s - px, dy = T.cy + (T.xy[2 * i + 1] - T.cam.y) * s - py;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) return;
+    stopPilot(true);
+    $('q').value = T.words[best];
+    restartFlow();
+    typeSearch();
+  }
+
+  // ---------- benchmarks tab ----------
+  function drawChart() {
+    $('tiles').innerHTML = BENCH.tiles.map((t) => `<div class="tile"><b>${t.value}</b><span>${t.label}</span></div>`).join('');
+    $('benchNote').textContent = BENCH.note;
+    if (BENCH.series.length === 0) return;
+    const w = 320, h = 214, l = 34, r = 10, t = 16, b = 30;
+    const lo = Math.log10(500), hi = Math.log10(40000);
+    const x = (v) => l + (v - 0.66) / (1.0 - 0.66) * (w - l - r);
+    const y = (q) => t + (1 - (Math.log10(q) - lo) / (hi - lo)) * (h - t - b);
+    let s = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Queries per second against recall for needle and hnswlib">`;
+    for (const q of [1000, 3000, 10000, 30000]) {
+      s += `<line class="grid" x1="${l}" x2="${w - r}" y1="${y(q)}" y2="${y(q)}"/>`;
+      s += `<text x="${l - 5}" y="${y(q) + 3}" text-anchor="end">${q / 1000}k</text>`;
+    }
+    for (const v of [70, 80, 90, 100]) {
+      s += `<text x="${x(v / 100)}" y="${h - b + 14}" text-anchor="${v === 100 ? 'end' : 'middle'}">${v}%</text>`;
+    }
+    s += `<text x="${l}" y="9">queries per second</text>`;
+    s += `<text x="${w - r}" y="${h - 3}" text-anchor="end">correct results in the top 10</text>`;
+    for (const series of BENCH.series) {
+      const pts = series.pts.map(([rec, qps]) => `${x(rec).toFixed(1)},${y(qps).toFixed(1)}`).join(' ');
+      s += `<polyline points="${pts}" fill="none" stroke="${series.color}" stroke-width="2" stroke-linejoin="round"${series.dash ? ' stroke-dasharray="4 3"' : ''}/>`;
+      for (const [rec, qps] of series.pts) {
+        s += `<circle cx="${x(rec).toFixed(1)}" cy="${y(qps).toFixed(1)}" r="2.6" fill="${series.color}"><title>${series.name}: ${(rec * 100).toFixed(1)}% at ${fmt(qps)} queries/s</title></circle>`;
+      }
+    }
+    $('chart').innerHTML = s + '</svg>';
+    $('chartLegend').innerHTML = BENCH.series.map((series) =>
+      `<span><i class="dash" style="background:${series.color}"></i>${series.name}</span>`).join('');
+  }
+
+  // ---------- controls ----------
+  const TABS = ['type', 'search', 'build', 'bench'];
+  function setTab(next) {
+    tab = next;
+    for (const name of TABS) {
+      $(`tab-${name}`).setAttribute('aria-selected', String(name === tab));
+      $(`pane-${name}`).hidden = name !== tab;
+    }
+    $('typebar').hidden = tab !== 'type';
+    panel.classList.toggle('tall', tab === 'bench');
+    panel.classList.toggle('typing', tab === 'type');
+    panel.scrollTop = 0;
+    hover = -1;
+    S = null;
+    if (tab === 'type') { T.clock = 0; typeSearch(); if (pilot.on && T.ready) autopilot(); }
+    else if (tab === 'build') { if (B.order.length === 0) resetBuild(); B.clock = 0; }
+    else { interacted = false; idleUntil = 0; randomQuery(); }
+    layout();
+  }
+  for (const name of TABS) $(`tab-${name}`).addEventListener('click', () => setTab(name));
+
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (tab === 'type') { tapWordAt(ev.clientX, ev.clientY); return; }
+    const qx = minX + (ev.clientX - ox) / scale, qy = minY + (ev.clientY - oy) / scale;
+    if (tab === 'build') { if (B.done) start(small, qx, qy, 'graph'); return; }
+    interacted = true;
+    $('auto').checked = false;
+    start(main, qx, qy, 'graph');
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (ev.pointerType !== 'mouse' || tab !== 'search') { hover = -1; return; }
+    let best = -1, bestD = 14 * 14;
+    for (let i = 0; i < main.n; i++) {
+      const dx = main.sx[i] - ev.clientX, dy = main.sy[i] - ev.clientY, d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    hover = best;
+  });
+  canvas.addEventListener('pointerleave', () => { hover = -1; });
+
+  $('random').addEventListener('click', () => { interacted = true; $('auto').checked = false; randomQuery(); });
+  $('brute').addEventListener('click', () => {
+    interacted = true; $('auto').checked = false;
+    if (S && S.g === main) start(main, S.qx, S.qy, 'brute');
+  });
+  $('auto').addEventListener('change', () => { interacted = !$('auto').checked; idleUntil = 0; });
+  $('edges').addEventListener('change', drawBase);
+  for (const [id, out] of [['width', 'widthOut'], ['k', 'kOut'], ['speed', 'speedOut']]) {
+    $(id).addEventListener('input', () => {
+      $(out).textContent = $(id).value;
+      $('kLabel').textContent = $('k').value;
+      if (id !== 'speed' && S && S.g === main) start(main, S.qx, S.qy, 'graph');
+    });
+  }
+
+  $('bSpeed').addEventListener('input', () => { $('bSpeedOut').textContent = $('bSpeed').value; });
+  $('bAlpha').addEventListener('input', () => {
+    B.alpha = +$('bAlpha').value / 10;
+    $('bAlphaOut').textContent = B.alpha.toFixed(1);
+    resetBuild(); B.playing = true; $('bPlay').textContent = 'Pause';
+  });
+  $('bR').addEventListener('input', () => {
+    B.R = +$('bR').value;
+    $('bROut').textContent = B.R;
+    resetBuild(); B.playing = true; $('bPlay').textContent = 'Pause';
+  });
+  $('bPlay').addEventListener('click', () => {
+    B.playing = !B.playing;
+    $('bPlay').textContent = B.playing ? 'Pause' : 'Play';
+  });
+  $('bRestart').addEventListener('click', () => { resetBuild(); B.playing = true; $('bPlay').textContent = 'Pause'; });
+  window.addEventListener('resize', layout);
+  if (window.ResizeObserver) {   // the sheet and the search box change height as their content changes
+    const watcher = new ResizeObserver(() => layout());
+    watcher.observe(panel);
+    watcher.observe($('typebar'));
+  }
+
+  $('total').textContent = fmt(main.n);
+  $('verb').textContent = tapWord;
+  drawChart();
+  setupType();
+  panel.classList.add('typing');
+  layout();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
