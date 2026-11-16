@@ -22,7 +22,7 @@ brute-force baseline, a benchmark against hnswlib, tests, and the demo page.
 
 ## Build and run
 
-Needs CMake 3.20+ and a C++20 compiler (tested with g++ 15.2 on Ubuntu under WSL2).
+Needs CMake 3.20+ and a C++20 compiler (tested with g++ 15.2 and clang 21.1 on Ubuntu under WSL2).
 
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -65,7 +65,7 @@ bench/compare_sift1m.sh build path/to/sift --threads 1
   by scanning every point.
 - **Build**: watch a 700-point index being built, one insertion at a time. Sliders change the
   pruning parameters and restart the build.
-- **Benchmarks**: the SIFT1M numbers below as a chart.
+- **Speed**: the SIFT1M numbers below as a chart, needle against hnswlib.
 
 ```
 ./build/needle_export_demo demo/graph.js     # rebuild the 2-D index with the C++ engine
@@ -79,9 +79,13 @@ build on the page are JavaScript ports of `VamanaIndex::beam_search`, `insert_po
 The word data is GloVe 6B (Stanford), cut to the 20,000 most common words, reduced from 300 to 64
 dimensions with PCA and rounded to int8. That reduction keeps about 55% of each word's original top
 10 neighbours, so results are sensible but not what full-size GloVe would return. To rebuild it
-(needs numpy, `vocab.json` and the start of `model.safetensors` from huggingface.co/NeuML/glove-6B):
+(needs numpy; the second download takes only the first 40 MB, which holds the most common words):
 
 ```
+mkdir -p data/glove
+curl -L -o data/glove/vocab.json https://huggingface.co/NeuML/glove-6B/resolve/main/vocab.json
+curl -L -r 0-40000999 -o data/glove/model.head.safetensors \
+    https://huggingface.co/NeuML/glove-6B/resolve/main/model.safetensors
 python3 tools/prep_words.py data/glove data/words
 ./build/needle_export_words data/words/words.fvecs data/words/words.txt demo/words.js
 ```
