@@ -3,6 +3,7 @@
 //                [--R R] [--L L] [--alpha A] [--seed S]
 //   needle_bench --base base.fvecs --query query.fvecs [--gt truth.ivecs] [--rows N] ...
 //   Build options: [--threads T] (0 = all cores) [--save index.idx] [--load index.idx]
+//   Extra tables: [--qthreads T] throughput on T threads, [--pq M] search on M-byte compressed vectors
 
 #include <algorithm>
 #include <atomic>
@@ -34,6 +35,7 @@ struct Options {
   std::size_t k = 10;
   std::size_t rows = 0;  // read only the first rows of --base; ground truth is then recomputed
   unsigned query_threads = 1;  // >1 adds a throughput table with that many searching threads
+  std::size_t pq = 0;  // >0 adds tables for search on product-quantizer codes of this many bytes
   std::string base_path, query_path, gt_path, save_path, load_path;
   VamanaParams index;
 };
@@ -60,6 +62,7 @@ static Options parse(int argc, char** argv) {
     else if (flag == "--rows") o.rows = std::strtoull(value, nullptr, 10);
     else if (flag == "--threads") o.index.threads = static_cast<unsigned>(std::strtoul(value, nullptr, 10));
     else if (flag == "--qthreads") o.query_threads = static_cast<unsigned>(std::strtoul(value, nullptr, 10));
+    else if (flag == "--pq") o.pq = std::strtoull(value, nullptr, 10);
     else if (flag == "--save") o.save_path = value;
     else if (flag == "--load") o.load_path = value;
     else {
@@ -125,32 +128,67 @@ int main(int argc, char** argv) {
   if (!o.save_path.empty()) index.save(o.save_path);
   std::printf("reachable from entry point: %zu / %zu\n\n", index.reachable_from_medoid(), base.n);
 
-  std::printf("| L | recall@%zu | QPS | speedup | p50 us | p99 us | dist comps |\n", o.k);
-  std::printf("|---|---|---|---|---|---|---|\n");
-  std::vector<double> single_qps;
-  for (const std::size_t L : {10, 20, 40, 80, 160, 320}) {
-    if (L < o.k) continue;
-    std::vector<std::vector<std::uint32_t>> found(queries.n);
-    std::vector<double> latency_us(queries.n);
-    std::uint64_t dist_comps = 0;
+  // One row per search width, one thread: recall, speed, latency and distances computed per query.
+  auto sweep = [&](const char* comps_name, auto&& search) {
+    std::printf("| L | recall@%zu | QPS | speedup | p50 us | p99 us | %s |\n", o.k, comps_name);
+    std::printf("|---|---|---|---|---|---|---|\n");
+    std::vector<double> all_qps;
+    for (const std::size_t L : {10, 20, 40, 80, 160, 320}) {
+      if (L < o.k) continue;
+      std::vector<std::vector<std::uint32_t>> found(queries.n);
+      std::vector<double> latency_us(queries.n);
+      std::uint64_t dist_comps = 0;
 
-    const auto sweep_start = Clock::now();
-    for (std::size_t q = 0; q < queries.n; ++q) {
-      SearchStats stats;
-      const auto t0 = Clock::now();
-      const auto hits = index.search(queries.row(q), o.k, L, &stats);
-      latency_us[q] = seconds_since(t0) * 1e6;
-      dist_comps += stats.dist_comps;
-      for (const Neighbor& h : hits) found[q].push_back(h.id);
+      const auto sweep_start = Clock::now();
+      for (std::size_t q = 0; q < queries.n; ++q) {
+        SearchStats stats;
+        const auto t0 = Clock::now();
+        const auto hits = search(queries.row(q), L, &stats);
+        latency_us[q] = seconds_since(t0) * 1e6;
+        dist_comps += stats.dist_comps;
+        for (const Neighbor& h : hits) found[q].push_back(h.id);
+      }
+      const double qps = static_cast<double>(queries.n) / seconds_since(sweep_start);
+
+      std::sort(latency_us.begin(), latency_us.end());
+      std::printf("| %zu | %.4f | %.0f | %.1fx | %.1f | %.1f | %.0f |\n", L,
+                  recall_at_k(truth, found, o.k), qps, qps / brute_qps, percentile(latency_us, 0.50),
+                  percentile(latency_us, 0.99),
+                  static_cast<double>(dist_comps) / static_cast<double>(queries.n));
+      all_qps.push_back(qps);
     }
-    const double qps = static_cast<double>(queries.n) / seconds_since(sweep_start);
+    return all_qps;
+  };
+  const std::vector<double> single_qps =
+      sweep("dist comps", [&](const float* query, std::size_t L, SearchStats* stats) {
+        return index.search(query, o.k, L, stats);
+      });
 
-    std::sort(latency_us.begin(), latency_us.end());
-    std::printf("| %zu | %.4f | %.0f | %.1fx | %.1f | %.1f | %.0f |\n", L,
-                recall_at_k(truth, found, o.k), qps, qps / brute_qps, percentile(latency_us, 0.50),
-                percentile(latency_us, 0.99),
-                static_cast<double>(dist_comps) / static_cast<double>(queries.n));
-    single_qps.push_back(qps);
+  if (o.pq != 0) {
+    // The same searches with the graph walked on compressed vectors.
+    ProductQuantizer pq;
+    start = Clock::now();
+    pq.train(base, {.m = o.pq});
+    const double train_s = seconds_since(start);
+    start = Clock::now();
+    const std::vector<std::uint8_t> codes = pq.encode(base);
+    const double mb = 1024.0 * 1024.0;
+    const double vector_mb = static_cast<double>(base.n * base.dim * sizeof(float)) / mb;
+    const double code_mb = static_cast<double>(codes.size()) / mb;
+    std::printf("\npq: %zu bytes per vector, trained in %.1f s, encoded in %.1f s (all cores)\n", o.pq,
+                train_s, seconds_since(start));
+    std::printf("memory: vectors %.0f MB, codes %.1f MB (%.0fx smaller), graph %.0f MB\n", vector_mb,
+                code_mb, vector_mb / code_mb,
+                static_cast<double>(base.n * (index.params().R + 1) * sizeof(std::uint32_t)) / mb);
+
+    std::printf("\ncodes only\n");
+    sweep("code comps", [&](const float* query, std::size_t L, SearchStats* stats) {
+      return index.search_pq(pq, codes, query, o.k, L, 0, stats);
+    });
+    std::printf("\ncodes, then every candidate in the beam re-scored with its real vector\n");
+    sweep("code comps", [&](const float* query, std::size_t L, SearchStats* stats) {
+      return index.search_pq(pq, codes, query, o.k, L, L, stats);
+    });
   }
 
   if (o.query_threads > 1) {
