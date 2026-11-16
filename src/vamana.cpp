@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "needle/distance.h"
+#include "parallel.h"
 
 namespace needle {
 namespace {
@@ -86,29 +87,6 @@ inline void prefetch(const float* row) noexcept {
 #else
   (void)row;
 #endif
-}
-
-/// Runs fn(i) for i in [0, count) on the given number of threads, handing out work in small blocks.
-template <typename Fn>
-void parallel_for(std::size_t count, unsigned threads, Fn fn) {
-  if (threads <= 1) {
-    for (std::size_t i = 0; i < count; ++i) fn(i);
-    return;
-  }
-  constexpr std::size_t block = 64;
-  std::atomic<std::size_t> next{0};
-  auto work = [&] {
-    for (;;) {
-      const std::size_t begin = next.fetch_add(block, std::memory_order_relaxed);
-      if (begin >= count) return;
-      const std::size_t end = std::min(count, begin + block);
-      for (std::size_t i = begin; i < end; ++i) fn(i);
-    }
-  };
-  std::vector<std::thread> pool;
-  for (unsigned t = 1; t < threads; ++t) pool.emplace_back(work);
-  work();
-  for (std::thread& t : pool) t.join();
 }
 
 constexpr std::uint32_t file_magic = 0x314C444Eu;  // "NDL1"
@@ -200,7 +178,7 @@ void VamanaIndex::build() {
   if (threads > 1) locks_ = std::make_unique<std::atomic_flag[]>(base_.n);
 
   for (const float alpha : {1.0f, params_.alpha}) {
-    parallel_for(base_.n, threads, [&](std::size_t i) { insert_point(order[i], alpha); });
+    parallel_for(base_.n, threads, 64, [&](std::size_t i) { insert_point(order[i], alpha); });
   }
   locks_.reset();
   if (params_.repair_orphans) repair_orphans();
