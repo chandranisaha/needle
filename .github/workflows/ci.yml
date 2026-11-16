@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            flags: -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release
+          - name: clang
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          - name: scalar distance kernel
+            flags: -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release -DNEEDLE_FORCE_SCALAR=ON
+          - name: thread sanitizer
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS=-fsanitize=thread
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower address randomisation so ThreadSanitizer can map its memory
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
